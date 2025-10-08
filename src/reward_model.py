@@ -51,11 +51,36 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
             inputs = model.build_chat_inputs(q, sol)
             all_inputs.append(inputs)
 
-    # Batch all inputs together
-    batch_inputs = {
-        'input_ids': torch.cat([inp['input_ids'] for inp in all_inputs], dim=0),
-        'attention_mask': torch.cat([inp['attention_mask'] for inp in all_inputs], dim=0)
-    }
+    # Handle tensor concatenation properly
+    if all_inputs:
+        # Ensure all tensors have the same dimensions and concatenate properly
+        input_ids_list = []
+        attention_mask_list = []
+
+        for inp in all_inputs:
+            # Handle case where tensors might be 1D or 2D
+            input_ids = inp['input_ids']
+            attention_mask = inp['attention_mask']
+
+            # Ensure tensors are 2D (batch_size=1, seq_len)
+            if input_ids.dim() == 1:
+                input_ids = input_ids.unsqueeze(0)
+            if attention_mask.dim() == 1:
+                attention_mask = attention_mask.unsqueeze(0)
+
+            input_ids_list.append(input_ids)
+            attention_mask_list.append(attention_mask)
+
+        batch_inputs = {
+            'input_ids': torch.cat(input_ids_list, dim=0),
+            'attention_mask': torch.cat(attention_mask_list, dim=0)
+        }
+    else:
+        # Handle empty case
+        batch_inputs = {
+            'input_ids': torch.empty(0, 0, dtype=torch.long),
+            'attention_mask': torch.empty(0, 0, dtype=torch.long)
+        }
 
     # Move to device
     batch_inputs = {k: v.to(model.model.device if hasattr(model.model, 'device') else model.device) for k, v in batch_inputs.items()}
