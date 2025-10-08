@@ -11,9 +11,9 @@ class VLLMEngineWrapper:
 
         # Extract vllm configuration parameters
         vllm_config = vllm_config or {}
-        gpu_memory_utilization = vllm_config.get("gpu_memory_utilization", 0.9)
-        max_num_seqs = vllm_config.get("max_num_seqs", 256)
-        max_num_batched_tokens = vllm_config.get("max_num_batched_tokens", 4096)
+        gpu_memory_utilization = vllm_config.get("gpu_memory_utilization")
+        max_num_seqs = vllm_config.get("max_num_seqs")
+        max_num_batched_tokens = vllm_config.get("max_num_batched_tokens")
 
         self.backend = LLM(
             model=model_name,
