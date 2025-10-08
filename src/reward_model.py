@@ -1,16 +1,22 @@
-from typing import List
+from typing import List, Tuple
 import torch
-from transformers import AutoModelForSequenceClassification, AutoTokenizer  # type: ignore
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 class AceMathRewardModel:
-    """Wrapper for AceMath (sequence classification) reward model.
-    Exposes model + tokenizer + device. No fallback placeholder model.
-    """
     def __init__(self, model_name: str, gpu_id: int):
         device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
         self.model_name = model_name
         self.device = device
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+
+        # Fast(er) tokenizer behavior
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_name, trust_remote_code=True, use_fast=True
+        )
+        if self.tokenizer.pad_token_id is None:
+            # fall back to eos if pad is missing
+            self.tokenizer.pad_token_id = getattr(self.tokenizer, "eos_token_id", 0)
+        # Right padding tends to be friendlier for many kernels
+        self.tokenizer.padding_side = "right"
 
         self.model = AutoModelForSequenceClassification.from_pretrained(
             model_name,
@@ -20,125 +26,143 @@ class AceMathRewardModel:
             trust_remote_code=True,
         ).eval()
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
+        # Optional: can help a bit when shapes repeat
+        try:
+            self.model = torch.compile(self.model, mode="reduce-overhead", fullgraph=False)  # PyTorch 2.x
+        except Exception:
+            pass
 
-
-    def build_chat_inputs(self, question: str, solution: str) -> dict:
-        chat = [
+    def _chat_of(self, question: str, solution: str):
+        return [
             {"role": "system", "content": "Please reason step by step, and check your final answer within \\boxed{}."},
             {"role": "user", "content": question},
             {"role": "assistant", "content": solution},
         ]
-        tokenized = self.tokenizer.apply_chat_template(
-            chat,
-            return_tensors="pt",
-            add_generation_prompt=False,
-            padding=True,
-            truncation=True
-        )
 
-        # Handle case where apply_chat_template returns just input_ids tensor
-        if isinstance(tokenized, torch.Tensor):
-            # Create attention mask manually
-            attention_mask = torch.ones_like(tokenized)
-            return {
-                'input_ids': tokenized,
-                'attention_mask': attention_mask
-            }
-        else:
-            # If it returns a dict, return as is
-            return tokenized
+    def build_chat_inputs_ids_only(self, question: str, solution: str) -> Tuple[list, int]:
+        """
+        Returns (input_ids_list, length) without padding.
+        We tokenize via apply_chat_template(tokenize=True) to avoid re-parsing prompts later.
+        """
+        ids = self.tokenizer.apply_chat_template(
+            self._chat_of(question, solution),
+            tokenize=True,
+            add_generation_prompt=False,
+            truncation=True,        # keep if your RM has a max length
+            return_tensors=None,    # -> list[int]
+        )
+        return ids, len(ids)
 
 
 def load_reward_model(model_name: str, gpu_id: int) -> AceMathRewardModel:
     return AceMathRewardModel(model_name=model_name, gpu_id=gpu_id)
 
 
-def score_solutions(questions: List[str], solutions: List[str], model: AceMathRewardModel, n_candidates: int, rm_config: dict = None) -> torch.Tensor:
+def _pad_to_multiple_of_8(batch):
+    # Optional: round sequence length up to multiple-of-8 to improve tensor-core utilization
+    input_ids = batch["input_ids"]
+    attn = batch["attention_mask"]
+    L = input_ids.size(1)
+    L8 = (L + 7) // 8 * 8
+    if L8 == L:
+        return batch
+    pad_len = L8 - L
+    pad_id = batch.get("pad_token_id", 0)
+    pad_ids = torch.full((input_ids.size(0), pad_len), pad_id, dtype=input_ids.dtype, device=input_ids.device)
+    pad_mask = torch.zeros((attn.size(0), pad_len), dtype=attn.dtype, device=attn.device)
+    batch["input_ids"] = torch.cat([input_ids, pad_ids], dim=1)
+    batch["attention_mask"] = torch.cat([attn, pad_mask], dim=1)
+    return batch
+
+
+def score_solutions(
+    questions: List[str],
+    solutions: List[str],
+    model: AceMathRewardModel,
+    n_candidates: int,
+    rm_config: dict = None
+) -> torch.Tensor:
     if len(solutions) != len(questions) * n_candidates:
         raise ValueError("Mismatch between flattened solutions and expected shape")
 
+    rm_config = rm_config or {}
+    # You can keep your old "batch size by items" or switch to a token budget:
+    batch_size_items = rm_config.get("rm_reference_batch_size", 32)
+    tokens_per_batch = rm_config.get("rm_reference_tokens_per_batch", None)  # e.g., 80000 on 48–80GB GPUs
 
-    batch_size = rm_config.get("rm_reference_batch_size")
-
-    # Collect all tokenized inputs
-    all_inputs = []
+    # ---- 1) Pre-tokenize ALL pairs once (fast & avoids per-step overhead) ----
+    ids_and_lens = []
+    ids_and_meta = []
     for qi, q in enumerate(questions):
         base = qi * n_candidates
         for k in range(n_candidates):
-            sol = solutions[base + k]
-            inputs = model.build_chat_inputs(q, sol)
-            all_inputs.append(inputs)
+            ids, L = model.build_chat_inputs_ids_only(q, solutions[base + k])
+            ids_and_lens.append(L)
+            ids_and_meta.append((qi, k, ids))
 
-    if not all_inputs:
-        # Handle empty case
+    if not ids_and_meta:
         return torch.empty(len(questions), n_candidates)
 
-    # Process in batches
-    all_logits = []
+    # ---- 2) Length-aware ordering (descending) to reduce padding ----
+    order = sorted(range(len(ids_and_meta)), key=lambda i: ids_and_lens[i], reverse=True)
+    ids_and_meta = [ids_and_meta[i] for i in order]
+    lengths = [ids_and_lens[i] for i in order]
 
-    for batch_start in range(0, len(all_inputs), batch_size):
-        batch_end = min(batch_start + batch_size, len(all_inputs))
-        batch_inputs_list = all_inputs[batch_start:batch_end]
+    # Helper to yield batches either by item count or token budget
+    def batch_indices():
+        if tokens_per_batch is None:
+            for start in range(0, len(ids_and_meta), batch_size_items):
+                yield range(start, min(start + batch_size_items, len(ids_and_meta)))
+        else:
+            start = 0
+            N = len(ids_and_meta)
+            while start < N:
+                budget = 0
+                end = start
+                while end < N and budget + lengths[end] <= tokens_per_batch:
+                    budget += lengths[end]
+                    end += 1
+                if end == start:  # single very long item
+                    end = start + 1
+                yield range(start, end)
+                start = end
 
-        # Find max length for this batch
-        input_ids_list = []
-        attention_mask_list = []
-        max_length = 0
+    device = next(model.model.parameters()).device
+    logits_out = torch.empty(len(ids_and_meta), dtype=torch.float32, device=device)
 
-        for inp in batch_inputs_list:
-            input_ids = inp['input_ids']
-            attention_mask = inp['attention_mask']
+    # ---- 3) Minimize host<->device stalls; use AMP + inference_mode ----
+    with torch.inference_mode(), torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        for idx_range in batch_indices():
+            # Build a list of dicts with unpadded ids so tokenizer.pad can pad efficiently
+            item_dicts = []
+            for idx in idx_range:
+                _qi, _k, ids = ids_and_meta[idx]
+                item_dicts.append({"input_ids": ids})
 
-            # Ensure tensors are 2D (batch_size=1, seq_len)
-            if input_ids.dim() == 1:
-                input_ids = input_ids.unsqueeze(0)
-            if attention_mask.dim() == 1:
-                attention_mask = attention_mask.unsqueeze(0)
+            batch = model.tokenizer.pad(
+                item_dicts,
+                padding=True,                # pad to longest in this batch
+                return_tensors="pt"
+            )
+            # HF pad returns attention_mask automatically
+            batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
+            batch["pad_token_id"] = model.tokenizer.pad_token_id
 
-            input_ids_list.append(input_ids)
-            attention_mask_list.append(attention_mask)
-            max_length = max(max_length, input_ids.size(1))
+            # Optional: pad length up to multiple-of-8 tokens
+            batch = _pad_to_multiple_of_8(batch)
 
-        # Pad all tensors in this batch to max_length
-        padded_input_ids = []
-        padded_attention_masks = []
+            out = model.model(**batch)
+            logits = out.logits.squeeze(-1).to(dtype=torch.float32)  # (B,)
 
-        for input_ids, attention_mask in zip(input_ids_list, attention_mask_list):
-            current_length = input_ids.size(1)
-            if current_length < max_length:
-                # Pad with the proper pad_token_id
-                pad_length = max_length - current_length
-                pad_token_id = model.tokenizer.pad_token_id if model.tokenizer.pad_token_id is not None else 0
+            # Write back into the global output in the length-sorted order
+            b_indices = list(idx_range)
+            logits_out[b_indices] = logits
 
-                input_ids_padded = torch.cat([
-                    input_ids,
-                    torch.full((1, pad_length), pad_token_id, dtype=input_ids.dtype, device=input_ids.device)
-                ], dim=1)
-                attention_mask_padded = torch.cat([
-                    attention_mask,
-                    torch.zeros(1, pad_length, dtype=attention_mask.dtype, device=attention_mask.device)
-                ], dim=1)
-            else:
-                input_ids_padded = input_ids
-                attention_mask_padded = attention_mask
+    # ---- 4) Undo the sort to original (questions, candidates) layout ----
+    # 'order' maps sorted positions -> original positions; build inverse permutation
+    inv = torch.empty(len(order), dtype=torch.long, device=logits_out.device)
+    inv[torch.tensor(order, device=inv.device)] = torch.arange(len(order), device=inv.device)
+    logits_out = logits_out[inv]
 
-            padded_input_ids.append(input_ids_padded)
-            padded_attention_masks.append(attention_mask_padded)
-
-        batch_inputs = {
-            'input_ids': torch.cat(padded_input_ids, dim=0),
-            'attention_mask': torch.cat(padded_attention_masks, dim=0)
-        }
-
-        # Move to device
-        batch_inputs = {k: v.to(model.model.device if hasattr(model.model, 'device') else model.device) for k, v in batch_inputs.items()}
-
-        # Process this batch
-        with torch.no_grad():
-            out = model.model(**batch_inputs)
-        batch_logits = out.logits.float().squeeze(-1)
-        all_logits.append(batch_logits)
-
-    # Concatenate all batch results
-    final_logits = torch.cat(all_logits, dim=0)
-    return final_logits.view(len(questions), n_candidates)
+    # Return shape (num_questions, n_candidates)
+    return logits_out.view(len(questions), n_candidates).cpu()
