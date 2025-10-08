@@ -85,7 +85,7 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
             "correct_count": sum(correctness[i]) if i < len(correctness) else 0
         }
 
-        print(f'question_data {question_data}')
+
         log_data["questions"].append(question_data)
 
     # Write to file
@@ -123,7 +123,9 @@ def training_loop(config: Dict[str, Any]):
         questions = [r[q_field] for r in records]
         gold_answers = [r[a_field] for r in records]
         prompts = build_prompts(questions, tokenizer)
-        print(f'len prompts {len(prompts)}')
+        print('---------'*5)
+        print(prompts)
+        print('---------'*5)
         candidates = engine.generate_candidates(prompts, n_samples=n_samples, **gen_cfg)
         print(f"[Step {step}] Generated candidates per question: {[len(c) for c in candidates]}")
         flat_solutions = [sol for cand_list in candidates for sol in cand_list]

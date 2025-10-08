@@ -21,7 +21,7 @@ generation:
 
 vllm:
   gpu_memory_utilization: 0.2
-  max_num_seqs: 256
+  max_num_seqs: 64
   max_num_batched_tokens: 32768
 
 
@@ -31,4 +31,4 @@ hardware:
 
 train:
   batch_size: 2
-  num_steps: 1
+  num_steps: 100
