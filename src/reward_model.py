@@ -50,9 +50,12 @@ def load_reward_model(model_name: str, gpu_id: int) -> AceMathRewardModel:
     return AceMathRewardModel(model_name=model_name, gpu_id=gpu_id)
 
 
-def score_solutions(questions: List[str], solutions: List[str], model: AceMathRewardModel, n_candidates: int) -> torch.Tensor:
+def score_solutions(questions: List[str], solutions: List[str], model: AceMathRewardModel, n_candidates: int, rm_config: dict = None) -> torch.Tensor:
     if len(solutions) != len(questions) * n_candidates:
         raise ValueError("Mismatch between flattened solutions and expected shape")
+
+    # Get batch size from config, default to 32
+    batch_size = rm_config.get("rm_reference_batch_size", 32) if rm_config else 32
 
     # Collect all tokenized inputs
     all_inputs = []
@@ -63,14 +66,23 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
             inputs = model.build_chat_inputs(q, sol)
             all_inputs.append(inputs)
 
-    # Handle tensor concatenation with padding
-    if all_inputs:
-        # Ensure all tensors are 2D and find max length
+    if not all_inputs:
+        # Handle empty case
+        return torch.empty(len(questions), n_candidates)
+
+    # Process in batches
+    all_logits = []
+
+    for batch_start in range(0, len(all_inputs), batch_size):
+        batch_end = min(batch_start + batch_size, len(all_inputs))
+        batch_inputs_list = all_inputs[batch_start:batch_end]
+
+        # Find max length for this batch
         input_ids_list = []
         attention_mask_list = []
         max_length = 0
 
-        for inp in all_inputs:
+        for inp in batch_inputs_list:
             input_ids = inp['input_ids']
             attention_mask = inp['attention_mask']
 
@@ -84,7 +96,7 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
             attention_mask_list.append(attention_mask)
             max_length = max(max_length, input_ids.size(1))
 
-        # Pad all tensors to max_length
+        # Pad all tensors in this batch to max_length
         padded_input_ids = []
         padded_attention_masks = []
 
@@ -112,17 +124,16 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
             'input_ids': torch.cat(padded_input_ids, dim=0),
             'attention_mask': torch.cat(padded_attention_masks, dim=0)
         }
-    else:
-        # Handle empty case
-        batch_inputs = {
-            'input_ids': torch.empty(0, 0, dtype=torch.long),
-            'attention_mask': torch.empty(0, 0, dtype=torch.long)
-        }
 
-    # Move to device
-    batch_inputs = {k: v.to(model.model.device if hasattr(model.model, 'device') else model.device) for k, v in batch_inputs.items()}
+        # Move to device
+        batch_inputs = {k: v.to(model.model.device if hasattr(model.model, 'device') else model.device) for k, v in batch_inputs.items()}
 
-    with torch.no_grad():
-        out = model.model(**batch_inputs)
-    logits = out.logits.float().squeeze(-1)
-    return logits.view(len(questions), n_candidates)
+        # Process this batch
+        with torch.no_grad():
+            out = model.model(**batch_inputs)
+        batch_logits = out.logits.float().squeeze(-1)
+        all_logits.append(batch_logits)
+
+    # Concatenate all batch results
+    final_logits = torch.cat(all_logits, dim=0)
+    return final_logits.view(len(questions), n_candidates)

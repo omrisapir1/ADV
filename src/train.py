@@ -92,6 +92,7 @@ def training_loop(config: Dict[str, Any]):
     vllm_config = config["vllm"]
     llm_gpu = config["hardware"].get("llm_gpu_id", 0)
     rm_gpu = config["hardware"].get("rm_gpu_id", 1)
+    rm_config = config.get("reward_model", {})
 
     gen_cfg = config["generation"]
     n_samples = gen_cfg["n_samples_per_problem"]
@@ -112,13 +113,17 @@ def training_loop(config: Dict[str, Any]):
         questions = [r[q_field] for r in records]
         gold_answers = [r[a_field] for r in records]
         prompts = build_prompts(questions, tokenizer)
+        print(f'len prompts {len(prompts)}')
         candidates = engine.generate_candidates(prompts, n_samples=n_samples, **gen_cfg)
         print(f"[Step {step}] Generated candidates per question: {[len(c) for c in candidates]}")
         flat_solutions = [sol for cand_list in candidates for sol in cand_list]
-        with torch.no_grad():
-            rm_scores = score_solutions(questions, flat_solutions, rm_model, n_samples)
-
         correctness = compute_final_correctness(candidates, gold_answers)
+        #filter non mixed answers
+
+        with torch.no_grad():
+            rm_scores = score_solutions(questions, flat_solutions, rm_model, n_samples, rm_config)
+
+
         log_questions(questions, gold_answers, candidates, rm_scores, correctness)
 
         loss = None# compute_joint_loss(rm_scores, correctness, candidates)
