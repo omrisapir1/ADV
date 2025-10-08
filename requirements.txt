@@ -1,0 +1,22 @@
+# Core dependencies
+torch>=2.0.0
+pyyaml>=6.0
+accelerate>=0.20.0
+transformers>=4.30.0
+
+# Generation engine
+vllm>=0.3.0
+
+# Dataset handling
+datasets>=2.10.0
+
+# Math parsing (optional but recommended)
+sympy>=1.12
+latex2sympy2>=1.9.0
+
+# Text processing
+regex>=2023.5.5
+
+# Development and utilities
+numpy>=1.24.0
+

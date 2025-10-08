@@ -1,5 +1,5 @@
 model:
-  llm_name: placeholder-llm-1.5B
+  llm_name: omrisap/Qwen2.5-Math-1.5B-5K-SFT
   rm_name: nvidia/AceMath-7B-RM
 
 dataset:
@@ -29,7 +29,3 @@ hardware:
 train:
   batch_size: 2
   num_steps: 1
-
-prompt:
-  template: |
-    {question}
