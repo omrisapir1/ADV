@@ -25,13 +25,25 @@ class AceMathRewardModel:
             {"role": "user", "content": question},
             {"role": "assistant", "content": solution},
         ]
-        return self.tokenizer.apply_chat_template(
+        tokenized = self.tokenizer.apply_chat_template(
             chat,
             return_tensors="pt",
             add_generation_prompt=False,
             padding=True,
             truncation=True
         )
+
+        # Handle case where apply_chat_template returns just input_ids tensor
+        if isinstance(tokenized, torch.Tensor):
+            # Create attention mask manually
+            attention_mask = torch.ones_like(tokenized)
+            return {
+                'input_ids': tokenized,
+                'attention_mask': attention_mask
+            }
+        else:
+            # If it returns a dict, return as is
+            return tokenized
 
 
 def load_reward_model(model_name: str, gpu_id: int) -> AceMathRewardModel:
