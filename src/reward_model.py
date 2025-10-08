@@ -12,14 +12,6 @@ class AceMathRewardModel:
         self.device = device
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
-        # Set padding token if not defined
-        if self.tokenizer.pad_token is None:
-            if self.tokenizer.eos_token is not None:
-                self.tokenizer.pad_token = self.tokenizer.eos_token
-            else:
-                # Fallback to a common padding token
-                self.tokenizer.add_special_tokens({'pad_token': '<pad>'})
-
         self.model = AutoModelForSequenceClassification.from_pretrained(
             model_name,
             device_map="auto" if torch.cuda.is_available() else None,
@@ -27,10 +19,8 @@ class AceMathRewardModel:
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
         ).eval()
+        self.model.config.pad_token_id = self.tokenizer.pad_token_id
 
-        # Resize token embeddings if we added a new token
-        if self.tokenizer.pad_token_id >= self.model.config.vocab_size:
-            self.model.resize_token_embeddings(len(self.tokenizer))
 
     def build_chat_inputs(self, question: str, solution: str) -> dict:
         chat = [
