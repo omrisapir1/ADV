@@ -134,7 +134,7 @@ def training_loop(config: Dict[str, Any]):
             rm_scores = score_solutions(questions, flat_solutions, rm_model, n_samples, rm_config)
 
 
-        log_questions(questions, gold_answers, candidates, rm_scores, correctness)
+        log_questions(questions, gold_answers, candidates, rm_scores, correctness.cpu().detach().tolist())
 
         loss = None# compute_joint_loss(rm_scores, correctness, candidates)
 
