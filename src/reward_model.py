@@ -54,9 +54,6 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
     if len(solutions) != len(questions) * n_candidates:
         raise ValueError("Mismatch between flattened solutions and expected shape")
 
-    print(f"DEBUG: Processing {len(questions)} questions with {n_candidates} candidates each")
-    print(f"DEBUG: Total solutions: {len(solutions)}")
-
     # Collect all tokenized inputs
     all_inputs = []
     for qi, q in enumerate(questions):
@@ -65,20 +62,17 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
             sol = solutions[base + k]
             inputs = model.build_chat_inputs(q, sol)
             all_inputs.append(inputs)
-            print(f"DEBUG: Question {qi}, Candidate {k}: input_ids shape = {inputs['input_ids'].shape}, attention_mask shape = {inputs['attention_mask'].shape}")
 
-    # Handle tensor concatenation properly
+    # Handle tensor concatenation with padding
     if all_inputs:
-        # Ensure all tensors have the same dimensions and concatenate properly
+        # Ensure all tensors are 2D and find max length
         input_ids_list = []
         attention_mask_list = []
+        max_length = 0
 
-        for i, inp in enumerate(all_inputs):
-            # Handle case where tensors might be 1D or 2D
+        for inp in all_inputs:
             input_ids = inp['input_ids']
             attention_mask = inp['attention_mask']
-
-            print(f"DEBUG: Input {i}: original input_ids shape = {input_ids.shape}, attention_mask shape = {attention_mask.shape}")
 
             # Ensure tensors are 2D (batch_size=1, seq_len)
             if input_ids.dim() == 1:
@@ -86,17 +80,37 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
             if attention_mask.dim() == 1:
                 attention_mask = attention_mask.unsqueeze(0)
 
-            print(f"DEBUG: Input {i}: after unsqueeze input_ids shape = {input_ids.shape}, attention_mask shape = {attention_mask.shape}")
-
             input_ids_list.append(input_ids)
             attention_mask_list.append(attention_mask)
+            max_length = max(max_length, input_ids.size(1))
 
-        print(f"DEBUG: About to concatenate {len(input_ids_list)} tensors")
-        print(f"DEBUG: Tensor shapes: {[t.shape for t in input_ids_list]}")
+        # Pad all tensors to max_length
+        padded_input_ids = []
+        padded_attention_masks = []
+
+        for input_ids, attention_mask in zip(input_ids_list, attention_mask_list):
+            current_length = input_ids.size(1)
+            if current_length < max_length:
+                # Pad with tokenizer.pad_token_id (usually 0 for input_ids)
+                pad_length = max_length - current_length
+                input_ids_padded = torch.cat([
+                    input_ids,
+                    torch.zeros(1, pad_length, dtype=input_ids.dtype, device=input_ids.device)
+                ], dim=1)
+                attention_mask_padded = torch.cat([
+                    attention_mask,
+                    torch.zeros(1, pad_length, dtype=attention_mask.dtype, device=attention_mask.device)
+                ], dim=1)
+            else:
+                input_ids_padded = input_ids
+                attention_mask_padded = attention_mask
+
+            padded_input_ids.append(input_ids_padded)
+            padded_attention_masks.append(attention_mask_padded)
 
         batch_inputs = {
-            'input_ids': torch.cat(input_ids_list, dim=0),
-            'attention_mask': torch.cat(attention_mask_list, dim=0)
+            'input_ids': torch.cat(padded_input_ids, dim=0),
+            'attention_mask': torch.cat(padded_attention_masks, dim=0)
         }
     else:
         # Handle empty case
@@ -104,8 +118,6 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
             'input_ids': torch.empty(0, 0, dtype=torch.long),
             'attention_mask': torch.empty(0, 0, dtype=torch.long)
         }
-
-    print(f"DEBUG: Final batch_inputs shapes: input_ids = {batch_inputs['input_ids'].shape}, attention_mask = {batch_inputs['attention_mask'].shape}")
 
     # Move to device
     batch_inputs = {k: v.to(model.model.device if hasattr(model.model, 'device') else model.device) for k, v in batch_inputs.items()}
