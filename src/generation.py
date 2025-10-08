@@ -31,8 +31,7 @@ class VLLMEngineWrapper:
         top_p = float(gen_cfg.get("top_p"))
         max_new_tokens = int(gen_cfg.get("max_new_tokens"))
         repetition_penalty = float(gen_cfg.get("repetition_penalty"))
-        top_k = float(gen_cfg.get("top_k"))
-        print(f'Sampling params: temperature={temperature}, top_p={top_p}, max_new_tokens={max_new_tokens}, n={n_samples}, repetition_penalty={repetition_penalty}')
+        top_k = int(gen_cfg.get("top_k"))
         sampling_params = SamplingParams(
             temperature=temperature,
             top_p=top_p,
