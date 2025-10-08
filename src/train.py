@@ -89,6 +89,7 @@ def training_loop(config: Dict[str, Any]):
     accel = Accelerator()
     llm_name = config["model"]["llm_name"]
     rm_name = config["model"]["rm_name"]
+    vllm_config = config["vllm"]
     llm_gpu = config["hardware"].get("llm_gpu_id", 0)
     rm_gpu = config["hardware"].get("rm_gpu_id", 1)
 
@@ -98,7 +99,7 @@ def training_loop(config: Dict[str, Any]):
     # Load tokenizer once
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
 
-    engine = build_vllm_engine(llm_name, llm_gpu)
+    engine = build_vllm_engine(llm_name, llm_gpu, vllm_config)
     rm_model = load_reward_model(rm_name, rm_gpu)
 
     batch_size = config["train"]["batch_size"]
