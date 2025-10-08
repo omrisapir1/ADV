@@ -1,5 +1,5 @@
 model:
-  llm_name: omrisap/Qwen2.5-Math-1.5B-5K-SFT
+  llm_name: Qwen/Qwen2.5-Math-1.5B-Instruct
   rm_name: nvidia/AceMath-7B-RM
 
 reward_model:
@@ -21,7 +21,7 @@ generation:
 
 vllm:
   gpu_memory_utilization: 0.2
-  max_num_seqs: 128
+  max_num_seqs: 96
   max_num_batched_tokens: 32768
 
 
@@ -30,5 +30,5 @@ hardware:
   rm_gpu_id: 1
 
 train:
-  batch_size: 8
+  batch_size: 16
   num_steps: 100

@@ -94,7 +94,7 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
 
     print(f"Logged results to {log_file}")
 
-
+import time
 def training_loop(config: Dict[str, Any]):
     accel = Accelerator()
     llm_name = config["model"]["llm_name"]
@@ -129,9 +129,9 @@ def training_loop(config: Dict[str, Any]):
         print('---------------')
         print('---------------')
         print(gold_answers)
-
+        st = time.time()
         correctness = compute_final_correctness(candidates, gold_answers)
-        print(correctness)
+        print(f'Total time: {time.time() - st}')
         #filter non mixed answers
         flat_solutions = [sol for cand_list in candidates for sol in cand_list]
         with torch.no_grad():
