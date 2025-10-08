@@ -27,10 +27,10 @@ class VLLMEngineWrapper:
 
 
     def generate_candidates(self, prompts: List[str], n_samples: int, **gen_cfg) -> List[List[str]]:
-        temperature = float(gen_cfg.get("temperature", 0.7))
-        top_p = float(gen_cfg.get("top_p", 0.9))
-        max_new_tokens = int(gen_cfg.get("max_new_tokens", 64))
-        repetition_penalty = float(gen_cfg.get("repetition_penalty", 1.0))
+        temperature = float(gen_cfg.get("temperature"))
+        top_p = float(gen_cfg.get("top_p"))
+        max_new_tokens = int(gen_cfg.get("max_new_tokens"))
+        repetition_penalty = float(gen_cfg.get("repetition_penalty"))
         sampling_params = SamplingParams(
             temperature=temperature,
             top_p=top_p,

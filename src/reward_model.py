@@ -11,6 +11,15 @@ class AceMathRewardModel:
         self.model_name = model_name
         self.device = device
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+
+        # Set padding token if not defined
+        if self.tokenizer.pad_token is None:
+            if self.tokenizer.eos_token is not None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            else:
+                # Fallback to a common padding token
+                self.tokenizer.add_special_tokens({'pad_token': '<pad>'})
+
         self.model = AutoModelForSequenceClassification.from_pretrained(
             model_name,
             device_map="auto" if torch.cuda.is_available() else None,
@@ -18,6 +27,10 @@ class AceMathRewardModel:
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
         ).eval()
+
+        # Resize token embeddings if we added a new token
+        if self.tokenizer.pad_token_id >= self.model.config.vocab_size:
+            self.model.resize_token_embeddings(len(self.tokenizer))
 
     def build_chat_inputs(self, question: str, solution: str) -> dict:
         chat = [
@@ -103,11 +116,13 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
         for input_ids, attention_mask in zip(input_ids_list, attention_mask_list):
             current_length = input_ids.size(1)
             if current_length < max_length:
-                # Pad with tokenizer.pad_token_id (usually 0 for input_ids)
+                # Pad with the proper pad_token_id
                 pad_length = max_length - current_length
+                pad_token_id = model.tokenizer.pad_token_id if model.tokenizer.pad_token_id is not None else 0
+
                 input_ids_padded = torch.cat([
                     input_ids,
-                    torch.zeros(1, pad_length, dtype=input_ids.dtype, device=input_ids.device)
+                    torch.full((1, pad_length), pad_token_id, dtype=input_ids.dtype, device=input_ids.device)
                 ], dim=1)
                 attention_mask_padded = torch.cat([
                     attention_mask,
