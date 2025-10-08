@@ -131,6 +131,7 @@ def training_loop(config: Dict[str, Any]):
         print(gold_answers)
 
         correctness = compute_final_correctness(candidates, gold_answers)
+        print(correctness)
         #filter non mixed answers
         flat_solutions = [sol for cand_list in candidates for sol in cand_list]
         with torch.no_grad():
