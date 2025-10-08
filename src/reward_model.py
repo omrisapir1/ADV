@@ -54,6 +54,9 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
     if len(solutions) != len(questions) * n_candidates:
         raise ValueError("Mismatch between flattened solutions and expected shape")
 
+    print(f"DEBUG: Processing {len(questions)} questions with {n_candidates} candidates each")
+    print(f"DEBUG: Total solutions: {len(solutions)}")
+
     # Collect all tokenized inputs
     all_inputs = []
     for qi, q in enumerate(questions):
@@ -62,6 +65,7 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
             sol = solutions[base + k]
             inputs = model.build_chat_inputs(q, sol)
             all_inputs.append(inputs)
+            print(f"DEBUG: Question {qi}, Candidate {k}: input_ids shape = {inputs['input_ids'].shape}, attention_mask shape = {inputs['attention_mask'].shape}")
 
     # Handle tensor concatenation properly
     if all_inputs:
@@ -69,10 +73,12 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
         input_ids_list = []
         attention_mask_list = []
 
-        for inp in all_inputs:
+        for i, inp in enumerate(all_inputs):
             # Handle case where tensors might be 1D or 2D
             input_ids = inp['input_ids']
             attention_mask = inp['attention_mask']
+
+            print(f"DEBUG: Input {i}: original input_ids shape = {input_ids.shape}, attention_mask shape = {attention_mask.shape}")
 
             # Ensure tensors are 2D (batch_size=1, seq_len)
             if input_ids.dim() == 1:
@@ -80,8 +86,13 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
             if attention_mask.dim() == 1:
                 attention_mask = attention_mask.unsqueeze(0)
 
+            print(f"DEBUG: Input {i}: after unsqueeze input_ids shape = {input_ids.shape}, attention_mask shape = {attention_mask.shape}")
+
             input_ids_list.append(input_ids)
             attention_mask_list.append(attention_mask)
+
+        print(f"DEBUG: About to concatenate {len(input_ids_list)} tensors")
+        print(f"DEBUG: Tensor shapes: {[t.shape for t in input_ids_list]}")
 
         batch_inputs = {
             'input_ids': torch.cat(input_ids_list, dim=0),
@@ -93,6 +104,8 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
             'input_ids': torch.empty(0, 0, dtype=torch.long),
             'attention_mask': torch.empty(0, 0, dtype=torch.long)
         }
+
+    print(f"DEBUG: Final batch_inputs shapes: input_ids = {batch_inputs['input_ids'].shape}, attention_mask = {batch_inputs['attention_mask'].shape}")
 
     # Move to device
     batch_inputs = {k: v.to(model.model.device if hasattr(model.model, 'device') else model.device) for k, v in batch_inputs.items()}
