@@ -65,17 +65,27 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
 
     # Process each question in the batch
     for i, (question, gold_answer) in enumerate(zip(questions, gold_answers)):
+        # Safely extract rm_scores for this question
+        question_rm_scores = []
+        if i < len(rm_scores):
+            if isinstance(rm_scores[i], torch.Tensor):
+                question_rm_scores = rm_scores[i].cpu().detach().tolist()
+            else:
+                question_rm_scores = list(rm_scores[i])
+
         question_data = {
             "question_id": i,
             "question": question,
             "gold_answer": gold_answer,
             "candidates": candidates[i] if i < len(candidates) else [],
-            "rm_scores": rm_scores[i].tolist() if i < len(rm_scores) else [],
+            "rm_scores": question_rm_scores,
             "correctness": correctness[i] if i < len(correctness) else [],
             "num_candidates": len(candidates[i]) if i < len(candidates) else 0,
-            "avg_rm_score": float(rm_scores[i].mean()) if i < len(rm_scores) else 0.0,
+            "avg_rm_score": float(sum(question_rm_scores) / len(question_rm_scores)) if question_rm_scores else 0.0,
             "correct_count": sum(correctness[i]) if i < len(correctness) else 0
         }
+
+        print(f'question_data {question_data}')
         log_data["questions"].append(question_data)
 
     # Write to file
