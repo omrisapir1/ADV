@@ -57,8 +57,8 @@ def score_solutions(questions: List[str], solutions: List[str], model: AceMathRe
     if len(solutions) != len(questions) * n_candidates:
         raise ValueError("Mismatch between flattened solutions and expected shape")
 
-    # Get batch size from config, default to 32
-    batch_size = rm_config.get("rm_reference_batch_size", 32) if rm_config else 32
+
+    batch_size = rm_config.get("rm_reference_batch_size")
 
     # Collect all tokenized inputs
     all_inputs = []
