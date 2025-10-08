@@ -3,7 +3,7 @@ model:
   rm_name: nvidia/AceMath-7B-RM
 
 dataset:
-  name: null            # e.g. "your-username/your-math-dataset" or local path
+  name: omrisap/NuminaMath-5K-TreeRPO            # e.g. "your-username/your-math-dataset" or local path
   split: train
   field_question: problem
   field_answer: final_answer

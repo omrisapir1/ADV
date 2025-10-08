@@ -49,7 +49,7 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
     """Log training results to disk in JSON format."""
 
     # Create logs directory if it doesn't exist
-    log_dir = "/Users/omri.sapir/learning/ADV/logs"
+    log_dir = "/workspace/ADV/src/data"
     os.makedirs(log_dir, exist_ok=True)
 
     # Create timestamp for the log file
