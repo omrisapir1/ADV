@@ -37,9 +37,9 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.op
     if optim_config.get("name", "adamw").lower() == "adamw":
         optimizer = AdamW(
             param_groups,
-            lr=optim_config.get("lr"),
+            lr=float(optim_config.get("lr")),
             betas=optim_config.get("betas"),
-            eps=optim_config.get("eps"),
+            eps=float(optim_config.get("eps")),
             fused=optim_config.get("fused")
         )
     else:
