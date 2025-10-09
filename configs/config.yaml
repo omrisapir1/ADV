@@ -15,7 +15,6 @@ reward_model:
     fused: true
     no_decay_modules: [ "LayerNorm", "bias" ]
   scheduler:
-      name: linear
       warmup_ratio: 0.03
   train:
     batch_size: 16

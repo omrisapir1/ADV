@@ -2,6 +2,7 @@ import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LinearLR
 from typing import Dict, Any, Iterator
+from transformers import get_linear_schedule_with_warmup
 
 
 def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.optim.Optimizer:
@@ -50,18 +51,11 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.op
 
 def create_scheduler(optimizer: torch.optim.Optimizer, config: Dict[str, Any], total_steps: int):
     """Create learning rate scheduler based on config."""
+
     scheduler_config = config.get("scheduler", {})
-
-    if scheduler_config.get("name", "linear").lower() == "linear":
-        warmup_ratio = float(scheduler_config.get("warmup_ratio"))
-        warmup_steps = int(total_steps * warmup_ratio)
-
-        scheduler = LinearLR(
-            optimizer,
-            start_factor=1e-6,  # Use small positive value instead of 0.0
-            end_factor=1.0,
-            total_iters=warmup_steps
-        )
-        return scheduler
-    else:
-        raise ValueError(f"Unsupported scheduler: {scheduler_config.get('name')}")
+    warmup_ratio = float(scheduler_config.get("warmup_ratio"))
+    warmup_steps = int(total_steps * warmup_ratio)
+    return get_linear_schedule_with_warmup(optimizer,
+        num_warmup_steps=max(1, warmup_steps),
+        num_training_steps=max(1, total_steps))
+    
