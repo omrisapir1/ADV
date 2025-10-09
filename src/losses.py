@@ -29,7 +29,7 @@ def compute_joint_loss(rm_scores: torch.Tensor, correctness: torch.Tensor, candi
         max_candidates = max(len(corr) for corr in correctness)
         correctness_tensor = torch.zeros(batch_size, max_candidates, dtype=torch.float, device=rm_scores.device)
         for i, corr_list in enumerate(correctness):
-            correctness_tensor[i, :len(corr_list)] = torch.tensor(corr_list, dtype=torch.float)
+            correctness_tensor[i, :len(corr_list)] = torch.tensor(corr_list, dtype=torch.float, device=rm_scores.device)
         correctness = correctness_tensor
 
     r_pos_list = []
@@ -67,7 +67,7 @@ def compute_joint_loss(rm_scores: torch.Tensor, correctness: torch.Tensor, candi
             r_neg_list.append(r_neg)
 
     if not r_pos_list:
-        # No valid pairs found, return zero loss
+        # No valid pairs found, return zero loss with gradient
         return torch.tensor(0.0, device=rm_scores.device, requires_grad=True)
 
     r_pos_tensor = torch.stack(r_pos_list)

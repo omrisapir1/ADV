@@ -3,7 +3,7 @@ model:
   rm_name: nvidia/AceMath-7B-RM
 
 reward_model:
-  reference_batch_size: 120
+  reference_batch_size: 240
   optim:
     name: adamw
     lr: 2e-5
@@ -40,7 +40,7 @@ generation:
   repetition_penalty: 1.1
 
 vllm:
-  gpu_memory_utilization: 0.6
+  gpu_memory_utilization: 0.95
   max_num_seqs: 512
   max_num_batched_tokens: 150000
 
