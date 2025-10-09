@@ -123,19 +123,19 @@ def training_loop(config: Dict[str, Any]):
         questions = [r[q_field] for r in records]
         gold_answers = [r[a_field] for r in records]
         prompts = build_prompts(questions, tokenizer)
+        st = time.time()
         candidates = engine.generate_candidates(prompts, n_samples=n_samples, **gen_cfg)
+        print(f'candidates Total time: {time.time() - st}')
         print(f"[Step {step}] Generated candidates per question: {[len(c) for c in candidates]}")
-        print(candidates)
-        print('---------------')
-        print('---------------')
-        print(gold_answers)
         st = time.time()
         correctness = compute_final_correctness(candidates, gold_answers)
-        print(f'Total time: {time.time() - st}')
+        print(f'correctness Total time: {time.time() - st}')
         #filter non mixed answers
         flat_solutions = [sol for cand_list in candidates for sol in cand_list]
+        st = time.time()
         with torch.no_grad():
             rm_scores = score_solutions(questions, flat_solutions, rm_model, n_samples, rm_config)
+        print(f'rm_scores Total time: {time.time() - st}')
 
 
         log_questions(questions, gold_answers, candidates, rm_scores, correctness.cpu().detach().tolist())
