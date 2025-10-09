@@ -58,11 +58,10 @@ def create_scheduler(optimizer: torch.optim.Optimizer, config: Dict[str, Any], t
 
         scheduler = LinearLR(
             optimizer,
-            start_factor=0.0,
+            start_factor=1e-6,  # Use small positive value instead of 0.0
             end_factor=1.0,
             total_iters=warmup_steps
         )
         return scheduler
     else:
         raise ValueError(f"Unsupported scheduler: {scheduler_config.get('name')}")
-
