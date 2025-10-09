@@ -3,7 +3,7 @@ model:
   rm_name: nvidia/AceMath-7B-RM
 
 reward_model:
-  reference_batch_size: 240
+  reference_batch_size: 120
   optim:
     name: adamw
     lr: 1e-4
