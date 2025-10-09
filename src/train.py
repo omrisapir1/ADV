@@ -112,12 +112,11 @@ def training_loop(config: Dict[str, Any]):
 
     # Load tokenizer once
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
-
-    engine = build_vllm_engine(llm_name, llm_gpu, vllm_config)
     rm_model = load_reward_model(rm_name, rm_gpu)
 
     # Initialize optimizer and scheduler
     optimizer = create_optimizer(rm_model, rm_config)
+    engine = build_vllm_engine(llm_name, llm_gpu, vllm_config)
     num_steps = config["train"]["num_steps"]
     scheduler = create_scheduler(optimizer, rm_config, num_steps)
 
