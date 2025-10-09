@@ -58,4 +58,3 @@ def create_scheduler(optimizer: torch.optim.Optimizer, config: Dict[str, Any], t
     return get_linear_schedule_with_warmup(optimizer,
         num_warmup_steps=max(1, warmup_steps),
         num_training_steps=max(1, total_steps))
-    

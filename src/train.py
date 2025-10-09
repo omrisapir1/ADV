@@ -173,7 +173,7 @@ def training_loop(config: Dict[str, Any]):
         st = time.time()
 
         # Training mode for reward model
-        rm_model.train()
+        rm_model.model.train()
 
         with accel.accumulate(rm_model):
             rm_scores = score_solutions(questions, flat_solutions, rm_model, n_samples, rm_config)
