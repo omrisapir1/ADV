@@ -1,4 +1,3 @@
-
 import time
 from typing import Dict, Any, List
 import yaml
@@ -12,9 +11,9 @@ from transformers import AutoTokenizer
 
 from .prompting import build_prompts
 from .generation import build_vllm_engine
-from .reward_model import load_reward_model, score_solutions
+from .reward_model import load_reward_model, score_solutions, score_question_solution_list
 from .answer_parse import compute_final_correctness
-from .losses import compute_joint_loss
+from .losses import pairwise_rm_loss
 from .optimizer import create_optimizer, create_scheduler
 
 
@@ -171,34 +170,60 @@ def training_loop(config: Dict[str, Any]):
         #filter non mixed answers
         flat_solutions = [sol for cand_list in candidates for sol in cand_list]
 
-        # Training mode for reward model
+        # First pass: inference (no grad) over all candidates for each question
         rm_model.model.eval()
         st = time.time()
         with torch.no_grad():
             rm_scores = score_solutions(questions, flat_solutions, rm_model, n_samples, rm_config)
             print(f'rm_scores Total time: {time.time() - st}')
 
+        # Select one positive (correct) and one negative (incorrect) per question based on first-pass scores
+        selected_q_pos, selected_s_pos, selected_q_neg, selected_s_neg = [], [], [], []
+        pos_indices, neg_indices = [], []  # store indices per selected pair for debugging
+        for qi, (q, cand_list, corr_list) in enumerate(zip(questions, candidates, correctness)):
+            scores_row = rm_scores[qi]
+            # Build lists of indices
+            correct_ids = [j for j, v in enumerate(corr_list) if v == 1]
+            incorrect_ids = [j for j, v in enumerate(corr_list) if v == 0]
+            if not correct_ids or not incorrect_ids:
+                continue
+            # Strategy: hardest positive (lowest score) and hardest negative (highest score)
+            pos_j = min(correct_ids, key=lambda j: scores_row[j])
+            neg_j = max(incorrect_ids, key=lambda j: scores_row[j])
+            selected_q_pos.append(q)
+            selected_s_pos.append(cand_list[pos_j])
+            selected_q_neg.append(q)
+            selected_s_neg.append(cand_list[neg_j])
+            pos_indices.append((qi, pos_j))
+            neg_indices.append((qi, neg_j))
+
+        if not selected_q_pos:
+            print(f"[Step {step}] No valid pos/neg pairs after selection, skipping.")
+            continue
+
+        # Second pass: gradient-enabled scoring only for selected pairs
         rm_model.model.train()
         with accel.accumulate(rm_model):
-            loss = compute_joint_loss(rm_scores, correctness, candidates)
+            r_pos = score_question_solution_list(selected_q_pos, selected_s_pos, rm_model, rm_config)
+            r_neg = score_question_solution_list(selected_q_neg, selected_s_neg, rm_model, rm_config)
+            # Ensure shapes align
+            assert r_pos.shape == r_neg.shape, "Mismatch in pos/neg shapes"
+            loss = pairwise_rm_loss(r_pos, r_neg)
 
             if loss is not None and isinstance(loss, torch.Tensor) and loss.item() > 0:
                 accel.backward(loss)
-
                 if accel.sync_gradients:
                     accel.clip_grad_norm_(rm_model.parameters(), grad_clip)
-
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
-
                 if step % log_every == 0:
-                    print(f"[Step {step}] Loss: {loss.item():.4f}, LR: {scheduler.get_last_lr()[0]:.2e}")
+                    print(f"[Step {step}] Loss: {loss.item():.4f}, LR: {scheduler.get_last_lr()[0]:.2e}, Pairs: {len(r_pos)}")
             else:
-                print(f"[Step {step}] No valid loss computed (no correct/incorrect pairs)")
+                print(f"[Step {step}] No valid loss computed (loss={loss})")
                 optimizer.zero_grad()
 
-        # Log results periodically
+        # Log results periodically (log full candidate scores and correctness)
         if step % log_every == 0:
             log_questions(questions, gold_answers, candidates, rm_scores, correctness)
 
@@ -208,7 +233,7 @@ def training_loop(config: Dict[str, Any]):
             accel.save_state(checkpoint_path)
             print(f"[Step {step}] Saved checkpoint to {checkpoint_path}")
 
-        print(f"[Step {step}] Completed batch with {len(questions)} questions.")
+        print(f"[Step {step}] Completed batch with {len(questions)} questions. Selected pairs: {len(selected_q_pos)}")
 
     # Save final checkpoint
     final_path = os.path.join(out_dir, "final")

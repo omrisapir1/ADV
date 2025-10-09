@@ -169,3 +169,78 @@ def score_solutions(
 
     # Return shape (num_questions, n_candidates)
     return logits_out.view(len(questions), n_candidates).cpu()
+
+
+def score_question_solution_list(
+    questions: List[str],
+    solutions: List[str],
+    model: AceMathRewardModel,
+    rm_config: dict | None = None,
+) -> torch.Tensor:
+    """Score aligned (question, solution) pairs with grad enabled.
+
+    Returns tensor on model device retaining gradient history.
+    """
+    if len(questions) != len(solutions):
+        raise ValueError("questions and solutions must be same length")
+
+    if len(questions) == 0:
+        return torch.empty(0)
+
+    rm_config = rm_config or {}
+    batch_size_items = rm_config.get("reference_batch_size") or 8
+    tokens_per_batch = rm_config.get("rm_reference_tokens_per_batch", None)
+
+    ids_and_lens = []
+    ids_and_meta = []  # (idx, ids)
+    for i, (q, s) in enumerate(zip(questions, solutions)):
+        ids, L = model.build_chat_inputs_ids_only(q, s)
+        ids_and_lens.append(L)
+        ids_and_meta.append((i, ids))
+
+    order = sorted(range(len(ids_and_meta)), key=lambda i: ids_and_lens[i], reverse=True)
+    ids_and_meta = [ids_and_meta[i] for i in order]
+    lengths = [ids_and_lens[i] for i in order]
+
+    def batch_indices():
+        if tokens_per_batch is None:
+            for start in range(0, len(ids_and_meta), batch_size_items):
+                yield range(start, min(start + batch_size_items, len(ids_and_meta)))
+        else:
+            start = 0
+            N = len(ids_and_meta)
+            while start < N:
+                budget = 0
+                end = start
+                while end < N and budget + lengths[end] <= tokens_per_batch:
+                    budget += lengths[end]
+                    end += 1
+                if end == start:
+                    end = start + 1
+                yield range(start, end)
+                start = end
+
+    device = next(model.model.parameters()).device
+    logits_out = torch.empty(len(ids_and_meta), dtype=torch.float32, device=device)
+
+    # Grad enabled pass (uses autocast for efficiency)
+    with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        for idx_range in batch_indices():
+            item_dicts = []
+            for idx in idx_range:
+                _orig_i, ids = ids_and_meta[idx]
+                item_dicts.append({"input_ids": ids})
+            batch = model.tokenizer.pad(item_dicts, padding=True, return_tensors="pt")
+            batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
+            batch["pad_token_id"] = model.tokenizer.pad_token_id
+            batch = _pad_to_multiple_of_8(batch)
+            out = model.model(**batch)
+            logits = out.logits.squeeze(-1).to(dtype=torch.float32)
+            b_indices = list(idx_range)
+            logits_out[b_indices] = logits
+
+    # Invert ordering
+    inv = torch.empty(len(order), dtype=torch.long, device=logits_out.device)
+    inv[torch.tensor(order, device=inv.device)] = torch.arange(len(order), device=inv.device)
+    logits_out = logits_out[inv]
+    return logits_out  # keep on device with gradients
