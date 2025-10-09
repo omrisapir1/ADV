@@ -42,8 +42,8 @@ generation:
 
 vllm:
   gpu_memory_utilization: 0.95
-  max_num_seqs: 1024
-  max_num_batched_tokens: 300000
+  max_num_seqs: 2048
+  max_num_batched_tokens: 600000
 
 
 hardware:
