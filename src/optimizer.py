@@ -15,7 +15,7 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.op
     decay_params = []
     no_decay_params = []
 
-    for name, param in model.named_parameters():
+    for name, param in model.parameters():
         if not param.requires_grad:
             continue
 
@@ -37,10 +37,10 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.op
     if optim_config.get("name", "adamw").lower() == "adamw":
         optimizer = AdamW(
             param_groups,
-            lr=optim_config.get("lr", 2e-5),
-            betas=optim_config.get("betas", [0.9, 0.999]),
-            eps=optim_config.get("eps", 1e-8),
-            fused=optim_config.get("fused", True)
+            lr=optim_config.get("lr"),
+            betas=optim_config.get("betas"),
+            eps=optim_config.get("eps"),
+            fused=optim_config.get("fused")
         )
     else:
         raise ValueError(f"Unsupported optimizer: {optim_config.get('name')}")
