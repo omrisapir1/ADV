@@ -20,7 +20,7 @@ class AceMathRewardModel:
 
         self.model = AutoModelForSequenceClassification.from_pretrained(
             model_name,
-            device_map="auto" if torch.cuda.is_available() else None,
+            device_map=self.device if torch.cuda.is_available() else None,
             num_labels=1,
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
