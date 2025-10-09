@@ -15,7 +15,7 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.op
     decay_params = []
     no_decay_params = []
 
-    for name, param in model.model.parameters():
+    for name, param in model.model.named_parameters():
         if not param.requires_grad:
             continue
 
