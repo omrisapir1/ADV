@@ -53,7 +53,7 @@ def create_scheduler(optimizer: torch.optim.Optimizer, config: Dict[str, Any], t
     scheduler_config = config.get("scheduler", {})
 
     if scheduler_config.get("name", "linear").lower() == "linear":
-        warmup_ratio = scheduler_config.get("warmup_ratio", 0.03)
+        warmup_ratio = float(scheduler_config.get("warmup_ratio"))
         warmup_steps = int(total_steps * warmup_ratio)
 
         scheduler = LinearLR(
