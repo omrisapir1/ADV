@@ -87,7 +87,7 @@ def score_solutions(
 
     rm_config = rm_config or {}
     # You can keep your old "batch size by items" or switch to a token budget:
-    batch_size_items = rm_config.get("rm_reference_batch_size", 32)
+    batch_size_items = rm_config.get("reference_batch_size")
     tokens_per_batch = rm_config.get("rm_reference_tokens_per_batch", None)  # e.g., 80000 on 48–80GB GPUs
 
     # ---- 1) Pre-tokenize ALL pairs once (fast & avoids per-step overhead) ----
