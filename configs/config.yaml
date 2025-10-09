@@ -6,7 +6,7 @@ reward_model:
   reference_batch_size: 240
   optim:
     name: adamw
-    lr: 2e-5
+    lr: 1e-4
     weight_decay: 0.01
     betas: [ 0.9, 0.999 ]
     eps: 1.0e-8
