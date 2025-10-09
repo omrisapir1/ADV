@@ -20,11 +20,14 @@ class AceMathRewardModel:
 
         self.model = AutoModelForSequenceClassification.from_pretrained(
             model_name,
-            device_map=self.device if torch.cuda.is_available() else None,
             num_labels=1,
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
         ).eval()
+
+        # Move the entire model to the specific device
+        self.model = self.model.to(self.device)
+
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
         # Optional: can help a bit when shapes repeat
         try:
