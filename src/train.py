@@ -170,15 +170,16 @@ def training_loop(config: Dict[str, Any]):
 
         #filter non mixed answers
         flat_solutions = [sol for cand_list in candidates for sol in cand_list]
-        st = time.time()
 
         # Training mode for reward model
-        rm_model.model.train()
-
-        with accel.accumulate(rm_model):
+        rm_model.model.eval()
+        st = time.time()
+        with torch.no_grad():
             rm_scores = score_solutions(questions, flat_solutions, rm_model, n_samples, rm_config)
             print(f'rm_scores Total time: {time.time() - st}')
 
+        rm_model.model.train()
+        with accel.accumulate(rm_model):
             loss = compute_joint_loss(rm_scores, correctness, candidates)
 
             if loss is not None and isinstance(loss, torch.Tensor) and loss.item() > 0:
