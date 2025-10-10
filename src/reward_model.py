@@ -203,8 +203,9 @@ class AceMathRewardModel:
         # Sort by length desc
         order = sorted(range(len(inter_ids)), key=lambda i: lengths[i], reverse=True)
         inter_ids_sorted = [inter_ids[i] for i in order]
-        # Single forward (kept small by external batching in train_step)
+
         print(len(inter_ids_sorted))
+        time.sleep(1)
         logits = self._collate_and_forward(
             inter_ids_sorted,
             use_amp_bf16=True,
