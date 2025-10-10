@@ -12,7 +12,7 @@ from transformers import AutoTokenizer
 from .prompting import build_prompts
 from .generation import build_sglang_engine  # switched from build_vllm_engine to build_sglang_engine
 from .reward_model import load_reward_model
-from .answer_parse import compute_final_correctness
+from .answer_parse import compute_final_correctness_async
 
 
 
@@ -159,7 +159,7 @@ async def training_loop(config: Dict[str, Any]):
         print(f'candidates Total time: {time.time() - st}')
         print(f"[Step {step}] Generated candidates per question: {[len(c) for c in candidates]}")
         st = time.time()
-        correctness = compute_final_correctness(candidates, gold_answers)
+        correctness = await compute_final_correctness_async(candidates, gold_answers)
         print(f'correctness Total time: {time.time() - st}')
 
         filtered_indices = []

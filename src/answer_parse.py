@@ -1,3 +1,5 @@
+import asyncio
+from functools import partial
 import regex as re
 from fractions import Fraction
 from math import isclose
@@ -220,3 +222,10 @@ def compute_final_correctness(candidates: List[List[str]], gold_answers: List[st
             if math_equal(cand_ans, gold_extracted):
                 out[i, j] = 1.0
     return out
+
+async def compute_final_correctness_async(candidates, gold_answers, max_workers=None, chunksize=8):
+    loop = asyncio.get_running_loop()
+    fn = partial(compute_final_correctness,
+                 candidates, gold_answers,
+                 max_workers=max_workers, chunksize=chunksize)
+    return await loop.run_in_executor(None, fn)  # uses default ProcessPool
