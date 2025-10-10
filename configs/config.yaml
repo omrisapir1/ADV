@@ -48,8 +48,8 @@ vllm:
 
 hardware:
   llm_gpu_id: 0
-  rm_gpu_id: 1
+  rm_gpu_id: 0
 
 train:
-  batch_size: 32
+  batch_size: 16
   num_steps: 100
