@@ -181,16 +181,19 @@ def score_question_solution_list(
 ) -> torch.Tensor:
     """Score aligned (question, solution) pairs with grad enabled.
 
+    Uses reward_model.train.batch_size from rm_config when available; otherwise falls back to
+    reward_model.reference_batch_size or 8.
+    Performs light CUDA cache cleanup after scoring if a train config is present.
     Returns tensor on model device retaining gradient history.
     """
     if len(questions) != len(solutions):
         raise ValueError("questions and solutions must be same length")
-
     if len(questions) == 0:
         return torch.empty(0)
 
     rm_config = rm_config or {}
-    batch_size_items = rm_config.get("reference_batch_size") or 8
+    train_cfg = rm_config.get("train", {}) if isinstance(rm_config.get("train", {}), dict) else {}
+    batch_size_items = train_cfg.get("batch_size")
     tokens_per_batch = rm_config.get("rm_reference_tokens_per_batch", None)
 
     ids_and_lens = []
@@ -223,9 +226,9 @@ def score_question_solution_list(
                 start = end
 
     device = next(model.model.parameters()).device
-    logits_out = torch.empty(len(ids_and_meta), dtype=torch.float32, device=device)
+    # Buffer preserving gradient by storing individual logits tensors (not copying into a preallocated non-grad tensor)
+    logits_buf: list[torch.Tensor] = [None] * len(ids_and_meta)  # type: ignore
 
-    # Grad enabled pass (uses autocast for efficiency)
     with torch.cuda.amp.autocast(dtype=torch.bfloat16):
         for idx_range in batch_indices():
             item_dicts = []
@@ -237,12 +240,25 @@ def score_question_solution_list(
             batch["pad_token_id"] = model.tokenizer.pad_token_id
             batch = _pad_to_multiple_of_8(batch)
             out = model.model(**batch)
-            logits = out.logits.squeeze(-1).to(dtype=torch.float32)
-            b_indices = list(idx_range)
-            logits_out[b_indices] = logits
+            logits = out.logits.squeeze(-1).to(dtype=torch.float32)  # (B,)
+            # Scatter logits preserving order within sorted space
+            for local_i, global_sorted_i in enumerate(list(idx_range)):
+                logits_buf[global_sorted_i] = logits[local_i]
+            # Cleanup per micro-batch (retain computation graph via logits_buf references)
+            del batch, out, logits
+            torch.cuda.empty_cache()
 
-    # Invert ordering
-    inv = torch.empty(len(order), dtype=torch.long, device=logits_out.device)
+    # Stack sorted logits
+    sorted_logits = torch.stack(logits_buf, dim=0)
+
+    # Invert ordering to original sequence
+    inv = torch.empty(len(order), dtype=torch.long, device=sorted_logits.device)
     inv[torch.tensor(order, device=inv.device)] = torch.arange(len(order), device=inv.device)
-    logits_out = logits_out[inv]
-    return logits_out  # keep on device with gradients
+    logits_out = sorted_logits[inv]
+
+    # Post-batch cleanup (keep logits_out for gradient)
+    del ids_and_meta, ids_and_lens, lengths, order, logits_buf, sorted_logits, inv
+    if train_cfg:
+        torch.cuda.empty_cache()
+
+    return logits_out  # gradient retained

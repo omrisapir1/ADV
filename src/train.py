@@ -8,7 +8,6 @@ from datetime import datetime
 from datasets import load_dataset
 from accelerate import Accelerator
 from transformers import AutoTokenizer
-
 from .prompting import build_prompts
 from .generation import build_vllm_engine
 from .reward_model import load_reward_model, score_solutions, score_question_solution_list
@@ -201,16 +200,13 @@ def training_loop(config: Dict[str, Any]):
             print(f"[Step {step}] No valid pos/neg pairs after selection, skipping.")
             continue
 
+        # Explicitly release any lingering GPU cache from first pass
+        print('Please check ')
+        torch.cuda.empty_cache()
+
         # Second pass: gradient-enabled scoring only for selected pairs
         rm_model.model.train()
         with accel.accumulate(rm_model):
-            print('Szies')
-            try:
-                print(len(selected_q_pos))
-                print(selected_q_pos.shape)
-            except Exception:
-                print(len(selected_q_pos))
-                print(selected_q_pos.shape)
             r_pos = score_question_solution_list(selected_q_pos, selected_s_pos, rm_model, rm_config)
             r_neg = score_question_solution_list(selected_q_neg, selected_s_neg, rm_model, rm_config)
             # Ensure shapes align
@@ -229,6 +225,9 @@ def training_loop(config: Dict[str, Any]):
             else:
                 print(f"[Step {step}] No valid loss computed (loss={loss})")
                 optimizer.zero_grad()
+            del r_pos, r_neg
+            torch.cuda.empty_cache()
+
 
         # Log results periodically (log full candidate scores and correctness)
         if step % log_every == 0:
