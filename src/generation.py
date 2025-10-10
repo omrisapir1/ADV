@@ -20,7 +20,6 @@ class SGLangEngineWrapper:
         max_new_tokens = int(gen_cfg.get("max_new_tokens"))
         repetition_penalty = float(gen_cfg.get("repetition_penalty"))
         top_k = int(gen_cfg.get("top_k", 0))
-        stop = gen_cfg.get("stop")  # e.g., ["</think>", "\n\n###"]
 
         all_candidates: List[List[str]] = []
         for prompt in prompts:

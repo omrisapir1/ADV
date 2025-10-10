@@ -1,5 +1,6 @@
 import time
 from typing import Dict, Any, List, Tuple
+import asyncio
 import yaml
 import torch
 import json
@@ -83,7 +84,11 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
             "correct_count": sum(correctness[i]) if i < len(correctness) else 0
         }
 
-
+        try:
+            json.dumps(question_data)
+        except:
+            print(f"Error serializing question data: {question_data}")
+            continue
         log_data["questions"].append(question_data)
 
     # Write to file
@@ -115,7 +120,7 @@ def choose_pos_neg_triplets(
     return triplets
 
 
-def training_loop(config: Dict[str, Any]):
+async def training_loop(config: Dict[str, Any]):
     rm_config = config.get("reward_model", {})
     train_config = rm_config.get("train", {})
     mixed_precision = train_config.get("mixed_precision", "bf16")
@@ -175,7 +180,7 @@ def training_loop(config: Dict[str, Any]):
         st = time.time()
         rm_scores = rm_model.score_reference(questions, candidates, rm_config)
         print(f'rm_scores Total time: {time.time() - st}')
-        log_questions(questions, gold_answers, candidates, rm_scores, correctness)
+
         triplets = choose_pos_neg_triplets(questions, candidates, correctness, rm_scores)
         if not triplets:
             print(f"[Step {step}] No valid pos/neg triplets after selection, skipping.")
@@ -183,7 +188,7 @@ def training_loop(config: Dict[str, Any]):
 
         avg_loss, last_lr = rm_model.train_step(triplets, accel)
         print(f"[Step {step}] Loss: {avg_loss:.4f}, LR: {last_lr:.2e}, Triplets: {len(triplets)}")
-
+        log_questions(questions, gold_answers, candidates, rm_scores, correctness)
 
         if step % save_every == 0 and step > 0:
             checkpoint_path = os.path.join(out_dir, f"checkpoint-{step}")
@@ -199,4 +204,4 @@ def training_loop(config: Dict[str, Any]):
 
 def run(config_path: str):
     config = load_config(config_path)
-    training_loop(config)
+    asyncio.run(training_loop(config))
