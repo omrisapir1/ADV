@@ -204,6 +204,13 @@ def training_loop(config: Dict[str, Any]):
         # Second pass: gradient-enabled scoring only for selected pairs
         rm_model.model.train()
         with accel.accumulate(rm_model):
+            print('Szies')
+            try:
+                print(len(selected_q_pos))
+                print(selected_q_pos.shape)
+            except Exception:
+                print(len(selected_q_pos))
+                print(selected_q_pos.shape)
             r_pos = score_question_solution_list(selected_q_pos, selected_s_pos, rm_model, rm_config)
             r_neg = score_question_solution_list(selected_q_neg, selected_s_neg, rm_model, rm_config)
             # Ensure shapes align
