@@ -155,7 +155,7 @@ async def training_loop(config: Dict[str, Any]):
         gold_answers = [r[a_field] for r in records]
         prompts = build_prompts(questions, tokenizer)
         st = time.time()
-        candidates = engine.generate_candidates(prompts, n_samples=n_samples, **gen_cfg)
+        candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **gen_cfg)
         print(f'candidates Total time: {time.time() - st}')
         print(f"[Step {step}] Generated candidates per question: {[len(c) for c in candidates]}")
         st = time.time()
