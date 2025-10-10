@@ -175,7 +175,7 @@ def training_loop(config: Dict[str, Any]):
         st = time.time()
         rm_scores = rm_model.score_reference(questions, candidates, rm_config)
         print(f'rm_scores Total time: {time.time() - st}')
-
+        log_questions(questions, gold_answers, candidates, rm_scores, correctness)
         triplets = choose_pos_neg_triplets(questions, candidates, correctness, rm_scores)
         if not triplets:
             print(f"[Step {step}] No valid pos/neg triplets after selection, skipping.")
@@ -184,8 +184,6 @@ def training_loop(config: Dict[str, Any]):
         avg_loss, last_lr = rm_model.train_step(triplets, accel)
         print(f"[Step {step}] Loss: {avg_loss:.4f}, LR: {last_lr:.2e}, Triplets: {len(triplets)}")
 
-        if step % log_every == 0:
-            log_questions(questions, gold_answers, candidates, rm_scores, correctness)
 
         if step % save_every == 0 and step > 0:
             checkpoint_path = os.path.join(out_dir, f"checkpoint-{step}")

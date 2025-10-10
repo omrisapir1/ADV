@@ -231,7 +231,7 @@ class AceMathRewardModel:
         assert self.optimizer is not None and self.scheduler is not None, "Optimizer/scheduler not initialized."
 
         self.model.train()
-        batch_size = self.pair_batch_size or self.train_config.get("batch_size", 8)
+        batch_size = self.pair_batch_size or self.train_config.get("batch_size")
         total_loss = 0.0
         num_batches = 0
 
@@ -258,7 +258,6 @@ class AceMathRewardModel:
         if num_batches:
             if accelerator.sync_gradients:
                 accelerator.clip_grad_norm_(self.model.parameters(), self.grad_clip or 1.0)
-            self.optimizer.step()
             self.scheduler.step()
             self.optimizer.zero_grad()
         else:
