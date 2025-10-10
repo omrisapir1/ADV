@@ -9,7 +9,7 @@ from datasets import load_dataset
 from accelerate import Accelerator
 from transformers import AutoTokenizer
 from .prompting import build_prompts
-from .generation import build_vllm_engine
+from .generation import build_sglang_engine  # switched from build_vllm_engine to build_sglang_engine
 from .reward_model import load_reward_model
 from .answer_parse import compute_final_correctness
 
@@ -124,7 +124,7 @@ def training_loop(config: Dict[str, Any]):
 
     llm_name = config["model"]["llm_name"]
     rm_name = config["model"]["rm_name"]
-    vllm_config = config["vllm"]
+    sglang_config = config.get("sglang", {})  # new config section for SGLang
     llm_gpu = config["hardware"].get("llm_gpu_id", 0)
     rm_gpu = config["hardware"].get("rm_gpu_id", 1)
     gen_cfg = config["generation"]
@@ -139,7 +139,8 @@ def training_loop(config: Dict[str, Any]):
     # Initialize reward model with integrated optimizer/scheduler via accelerator
     rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps, accel)
 
-    engine = build_vllm_engine(llm_name, llm_gpu, vllm_config)
+    # Build SGLang engine
+    engine = build_sglang_engine(llm_name, llm_gpu, sglang_config)
     dataset_obj, q_field, a_field = load_dataset_handle(config)
     os.makedirs(out_dir, exist_ok=True)
 

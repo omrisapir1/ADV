@@ -15,10 +15,10 @@ class SGLangEngineWrapper:
 
     def generate_candidates(self, prompts: List[str], n_samples: int, **gen_cfg) -> List[List[str]]:
         """RAW prompt path — no chat template applied."""
-        temperature = float(gen_cfg.get("temperature", 0.9))
-        top_p = float(gen_cfg.get("top_p", 0.95))
-        max_new_tokens = int(gen_cfg.get("max_new_tokens", 1024))
-        repetition_penalty = float(gen_cfg.get("repetition_penalty", 1.05))
+        temperature = float(gen_cfg.get("temperature"))
+        top_p = float(gen_cfg.get("top_p"))
+        max_new_tokens = int(gen_cfg.get("max_new_tokens"))
+        repetition_penalty = float(gen_cfg.get("repetition_penalty"))
         top_k = int(gen_cfg.get("top_k", 0))
         stop = gen_cfg.get("stop")  # e.g., ["</think>", "\n\n###"]
 
@@ -31,7 +31,6 @@ class SGLangEngineWrapper:
                 temperature=temperature,
                 top_p=top_p,
                 max_tokens=max_new_tokens,
-                stop=stop,
                 extra_body={
                     "top_k": top_k,
                     "repetition_penalty": repetition_penalty,

@@ -3,7 +3,7 @@
 Minimal Working Prototype (MWP) for joint data flow between a small generation LLM and a larger reward model (RM). This prototype wires together:
 
 1. Dummy math problem dataset → prompt construction.
-2. vLLM (or a lightweight dummy fallback) → multiple candidate solutions per problem.
+2. SGLang (HTTP completion endpoint via OpenAI-compatible client) → multiple candidate solutions per problem.
 3. Reward model stub OR AceMath-7B-RM (if available) → scores per candidate.
 4. Placeholders for correctness evaluation and joint loss.
 
@@ -12,86 +12,70 @@ No real optimization, correctness, or RLHF/GRPO/PPO logic is implemented yet—o
 ## Repo Structure
 ```
 configs/
-  default.yaml          # Configuration (model names, generation + training params)
-requirements.txt        # Dependencies (heavy libs optional; dummy fallbacks are used if missing)
+  config.yaml          # Configuration (model names, generation + training params)
+requirements.txt       # Dependencies
 src/
-  main.py               # CLI entry point
-  train.py              # Training loop skeleton
-  prompting.py          # Prompt construction utilities
-  generation.py         # vLLM wrapper (with dummy fallback)
-  reward_model.py       # Reward model stub
-  losses.py             # Joint loss placeholder (NotImplementedError)
-  answer_parse.py       # Correctness placeholder (NotImplementedError)
+  main.py              # CLI entry point
+  train.py             # Training loop
+  prompting.py         # Prompt construction utilities
+  generation.py        # SGLang wrapper (OpenAI-compatible client)
+  reward_model.py      # Reward model
+  losses.py            # Joint loss placeholder
+  answer_parse.py      # Correctness placeholder
 ```
 
-## Configuration (configs/default.yaml)
+## Configuration (configs/config.yaml)
 Key fields:
-- model.llm_name: placeholder string (not downloaded unless vLLM present).
-- model.rm_name: placeholder HF model name (only loaded if transformers available).
+- model.llm_name / model.rm_name: HF model identifiers.
 - generation: sampling parameters + number of candidates per question.
-- hardware.llm_gpu_id / hardware.rm_gpu_id: target device IDs (falls back to CPU if CUDA unavailable).
+- sglang: base_url and api_key for SGLang server.
+- hardware.llm_gpu_id / hardware.rm_gpu_id: device IDs.
 - train.batch_size / train.num_steps: loop control.
 
 ## Install (Minimal)
-You only strictly need torch + pyyaml to run the dummy path:
+You only strictly need torch + pyyaml to run the flow:
 ```bash
 pip install torch pyyaml
 ```
-Optional (enables real components if environment supports):
+Optional (real components):
 ```bash
-pip install accelerate transformers vllm
+pip install accelerate transformers openai datasets
 ```
 
 ## Run
 From repo root:
 ```bash
-python -m src.main --config configs/default.yaml
+python -m src.main --config configs/config.yaml
 ```
 
 ## Expected Console Output (Example)
 ```
-[Step 0] Generated candidates per question: [3, 3]
-[Step 0] Reward model scores shape: (2, 3)
-Correctness not implemented.
-Loss not implemented.
-[Step 0] Completed batch with 2 questions.
+[Step 0] Generated candidates per question: [96, 96]
+[Step 0] Loss: 0.4321, LR: 1.00e-04, Triplets: 12
+[Step 0] Completed batch with 12 questions. Triplets selected: 12
 ```
 Values and shapes depend on config (batch_size, n_samples_per_problem).
 
 ## Placeholders (Intentional)
-- answer_parse.compute_final_correctness → raises NotImplementedError (caught in loop).
-- losses.compute_joint_loss_placeholder → raises NotImplementedError (caught in loop).
-- reward_model uses random features unless a HF model loads successfully.
-- vLLM engine replaced by DummyLLM if library or model unavailable.
+- answer_parse.compute_final_correctness → simplistic correctness logic.
+- losses.pairwise_rm_loss → pairwise preference loss only.
+- Reward model may fallback depending on resources.
 
-## Reward Model Options
-- Default config now sets `model.rm_name: nvidia/AceMath-7B-RM`.
-- If `transformers` and system resources allow, it loads the AceMath sequence classification head and produces scalar logits as scores.
-- If loading fails (no GPU / OOM / offline / missing lib), it transparently falls back to a tiny random MLP; console will show a fallback message.
+## Reward Model Notes
+Loads AceMath-7B-RM via transformers when available; otherwise you must adjust for smaller models if constrained.
 
-Example manual snippet (mirrors integrated loader):
-```python
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-import torch
-model = AutoModelForSequenceClassification.from_pretrained(
-    "nvidia/AceMath-7B-RM", device_map="auto", num_labels=1,
-    torch_dtype=torch.bfloat16, trust_remote_code=True
-).eval()
-tokenizer = AutoTokenizer.from_pretrained("nvidia/AceMath-7B-RM", trust_remote_code=True)
-```
-
-Scoring pipeline builds a chat-style conversation: system + user(question) + assistant(candidate solution) per candidate.
+## SGLang Generation
+The generation layer makes raw completion calls (no chat template) using an OpenAI-compatible endpoint. Configure `sglang.base_url` and `sglang.api_key` in `config.yaml` or environment vars (`SGLANG_BASE_URL`, `SGLANG_API_KEY`).
 
 ## Where to Implement Next
-- Implement correctness parsing / answer matching in `answer_parse.py`.
-- Implement a real joint loss (e.g., policy + reward shaping) in `losses.py`.
-- Replace dummy reward model forward pass with proper scoring.
-- Introduce real dataset + dataloader.
-- Add logging, checkpoints, evaluation, metrics.
+- Improve correctness parsing in `answer_parse.py`.
+- Add more robust logging / evaluation metrics.
+- Integrate curriculum or adaptive sampling.
+- Add unit tests.
 
 ## Safety / Resource Notes
-- Current prototype avoids large model downloads by failing over to lightweight dummy classes.
-- Multi-GPU separation is declarative (IDs in config); if only one device exists, both fall back to CPU.
+- High `n_samples_per_problem` increases latency and memory.
+- Use smaller batch sizes if GPU memory is limited.
 
 ## License
 Placeholder (add a license file as needed).

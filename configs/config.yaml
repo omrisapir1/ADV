@@ -25,6 +25,10 @@ reward_model:
     save_every: 500
     out_dir: /workspace/ADV/checkpoints/rm
 
+sglang:
+  base_url: http://localhost:30000/v1
+  api_key: EMPTY
+
 
 dataset:
   name: omrisap/NuminaMath-5K-TreeRPO            # e.g. "your-username/your-math-dataset" or local path
@@ -39,11 +43,6 @@ generation:
   top_p: 0.96
   top_k: 200
   repetition_penalty: 1.1
-
-vllm:
-  gpu_memory_utilization: 0.6
-  max_num_seqs: 2048
-  max_num_batched_tokens: 600000
 
 
 hardware:

@@ -12,7 +12,6 @@ latex2sympy2==1.9.1
 regex==2025.9.18
 numpy==2.1.2
 pyyaml==6.0.2
+openai==1.46.0  # added for SGLang OpenAI-compatible client
 
-# Serve
-sglang[all]   # server + client, provides the OpenAI-compatible API
-openai  # Python client you’re already using in wrapper
+# Removed vllm; not needed after migration to SGLang
