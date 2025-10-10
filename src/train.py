@@ -159,7 +159,7 @@ async def training_loop(config: Dict[str, Any]):
         print(f'candidates Total time: {time.time() - st}')
         print(f"[Step {step}] Generated candidates per question: {[len(c) for c in candidates]}")
         st = time.time()
-        correctness = await compute_final_correctness_async(candidates, gold_answers)
+        correctness = await compute_final_correctness_async(candidates, gold_answers, max_workers=os.cpu_count() - 1)
         print(f'correctness Total time: {time.time() - st}')
 
         filtered_indices = []

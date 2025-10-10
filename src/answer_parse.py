@@ -4,6 +4,7 @@ import regex as re
 from fractions import Fraction
 from math import isclose
 from typing import Union, Optional, List
+from concurrent.futures import ProcessPoolExecutor
 import torch
 
 
@@ -198,16 +199,23 @@ def math_equal(
         pred = _str_to_pmatrix(pred)
     return _symbolic_equal(pred, ref)
 
-def compute_final_correctness(candidates: List[List[str]], gold_answers: List[str]) -> torch.Tensor:
-    """Compute per-candidate correctness vs gold answers.
 
-    Args:
-        candidates: List (batch) of lists (num_candidates) with raw solution strings.
-        gold_answers: List of gold final answers (length = batch).
+def _row_correctness(args):
+    i, row, gold_raw = args
+    gold_extracted = extract_final_answer(gold_raw) or gold_raw
+    out_row = [0.0] * len(row)
+    for j, cand_raw in enumerate(row):
+        cand_ans = extract_final_answer(cand_raw)
+        if math_equal(cand_ans, gold_extracted):
+            out_row[j] = 1.0
+    return i, out_row
 
-    Returns:
-        torch.FloatTensor shape [B, N] with 1.0 correct, 0.0 incorrect. Missing candidate -> 0.
-    """
+def compute_final_correctness_parallel(
+    candidates: List[List[str]],
+    gold_answers: List[str],
+    max_workers: Optional[int] = None,
+    chunksize: int = 8,
+) -> torch.Tensor:
     B = len(candidates)
     if len(gold_answers) != B:
         raise ValueError("gold_answers length must match candidates batch size")
@@ -215,17 +223,28 @@ def compute_final_correctness(candidates: List[List[str]], gold_answers: List[st
         return torch.zeros(0, 0)
     N = max((len(row) for row in candidates), default=0)
     out = torch.zeros(B, N, dtype=torch.float32)
-    for i, (row, gold_raw) in enumerate(zip(candidates, gold_answers)):
-        gold_extracted = extract_final_answer(gold_raw) or gold_raw
-        for j, cand_raw in enumerate(row):
-            cand_ans = extract_final_answer(cand_raw)
-            if math_equal(cand_ans, gold_extracted):
-                out[i, j] = 1.0
+
+    tasks = [(i, candidates[i], gold_answers[i]) for i in range(B)]
+    with ProcessPoolExecutor(max_workers=max_workers) as ex:
+        for i, out_row in ex.map(_row_correctness, tasks, chunksize=chunksize):
+            if out_row:
+                out[i, :len(out_row)] = torch.tensor(out_row, dtype=torch.float32)
     return out
 
-async def compute_final_correctness_async(candidates, gold_answers, max_workers=None, chunksize=8):
+_PROCESS_POOL = ProcessPoolExecutor()
+
+async def compute_final_correctness_async(
+    candidates: List[List[str]],
+    gold_answers: List[str],
+    max_workers: Optional[int] = None,   # optional override
+    chunksize: int = 8,
+) -> torch.Tensor:
     loop = asyncio.get_running_loop()
-    fn = partial(compute_final_correctness,
-                 candidates, gold_answers,
-                 max_workers=max_workers, chunksize=chunksize)
-    return await loop.run_in_executor(None, fn)  # uses default ProcessPool
+    # choose executor: use provided worker cap or the shared one
+    executor = ProcessPoolExecutor(max_workers=max_workers) if max_workers else _PROCESS_POOL
+    fn = partial(
+        compute_final_correctness_parallel,
+        candidates, gold_answers,
+        max_workers=max_workers, chunksize=chunksize
+    )
+    return await loop.run_in_executor(executor, fn)
