@@ -145,7 +145,7 @@ async def training_loop(config: Dict[str, Any]):
     rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps, accel)
 
     # Build SGLang engine
-    engine = build_sglang_engine(llm_name, llm_gpu, sglang_config)
+    engine = build_sglang_engine(llm_name, sglang_config)
     dataset_obj, q_field, a_field = load_dataset_handle(config)
     os.makedirs(out_dir, exist_ok=True)
 
