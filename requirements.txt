@@ -14,4 +14,5 @@ numpy==2.1.2
 pyyaml==6.0.2
 
 # Serve
-vllm==0.11.0
+sglang[all]   # server + client, provides the OpenAI-compatible API
+openai  # Python client you’re already using in wrapper

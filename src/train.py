@@ -1,5 +1,5 @@
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 import yaml
 import torch
 import json
@@ -10,10 +10,8 @@ from accelerate import Accelerator
 from transformers import AutoTokenizer
 from .prompting import build_prompts
 from .generation import build_vllm_engine
-from .reward_model import load_reward_model, score_solutions, score_question_solution_list
+from .reward_model import load_reward_model
 from .answer_parse import compute_final_correctness
-from .losses import pairwise_rm_loss
-from .optimizer import create_optimizer, create_scheduler
 
 
 
@@ -95,42 +93,54 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
     print(f"Logged results to {log_file}")
 
 
+def choose_pos_neg_triplets(
+    questions: List[str],
+    candidates: List[List[str]],
+    correctness: List[List[int]],
+    rm_scores: torch.Tensor,
+) -> List[Tuple[str, str, str]]:
+    """Return triplets (question, pos_solution, neg_solution) selecting hardest pos (lowest score among correct)
+    and hardest neg (highest score among incorrect) for each question with mixed correctness.
+    """
+    triplets: List[Tuple[str, str, str]] = []
+    for qi, (q, cand_list, corr_list) in enumerate(zip(questions, candidates, correctness)):
+        scores_row = rm_scores[qi]
+        correct_ids = [j for j, v in enumerate(corr_list) if v == 1]
+        incorrect_ids = [j for j, v in enumerate(corr_list) if v == 0]
+        if not correct_ids or not incorrect_ids:
+            continue
+        pos_j = min(correct_ids, key=lambda j: scores_row[j])
+        neg_j = max(incorrect_ids, key=lambda j: scores_row[j])
+        triplets.append((q, cand_list[pos_j], cand_list[neg_j]))
+    return triplets
+
+
 def training_loop(config: Dict[str, Any]):
-    accel = Accelerator(mixed_precision=config["reward_model"]["train"].get("mixed_precision", "bf16"))
+    rm_config = config.get("reward_model", {})
+    train_config = rm_config.get("train", {})
+    mixed_precision = train_config.get("mixed_precision", "bf16")
+    grad_accum = train_config.get("grad_accum", 1)
+    accel = Accelerator(mixed_precision=mixed_precision, gradient_accumulation_steps=grad_accum)
+
     llm_name = config["model"]["llm_name"]
     rm_name = config["model"]["rm_name"]
     vllm_config = config["vllm"]
     llm_gpu = config["hardware"].get("llm_gpu_id", 0)
     rm_gpu = config["hardware"].get("rm_gpu_id", 1)
-    rm_config = config.get("reward_model", {})
-    train_config = rm_config.get("train", {})
-
     gen_cfg = config["generation"]
     n_samples = gen_cfg["n_samples_per_problem"]
-
-    # Load tokenizer once
-    tokenizer = AutoTokenizer.from_pretrained(llm_name)
-    rm_model = load_reward_model(rm_name, rm_gpu)
-
-    # Initialize optimizer and scheduler
-    optimizer = create_optimizer(rm_model, rm_config)
-    engine = build_vllm_engine(llm_name, llm_gpu, vllm_config)
     num_steps = config["train"]["num_steps"]
-    scheduler = create_scheduler(optimizer, rm_config, num_steps)
-
-    # Prepare with accelerator
-    rm_model, optimizer, scheduler = accel.prepare(rm_model, optimizer, scheduler)
-
     batch_size = config["train"]["batch_size"]
-    grad_accum = train_config.get("grad_accum", 1)
-    grad_clip = train_config.get("grad_clip", 1.0)
     log_every = train_config.get("log_every", 10)
     save_every = train_config.get("save_every", 500)
     out_dir = train_config.get("out_dir", "/workspace/ADV/checkpoints/rm")
 
-    dataset_obj, q_field, a_field = load_dataset_handle(config)
+    tokenizer = AutoTokenizer.from_pretrained(llm_name)
+    # Initialize reward model with integrated optimizer/scheduler via accelerator
+    rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps, accel)
 
-    # Create output directory
+    engine = build_vllm_engine(llm_name, llm_gpu, vllm_config)
+    dataset_obj, q_field, a_field = load_dataset_handle(config)
     os.makedirs(out_dir, exist_ok=True)
 
     for step in range(num_steps):
@@ -146,102 +156,43 @@ def training_loop(config: Dict[str, Any]):
         correctness = compute_final_correctness(candidates, gold_answers)
         print(f'correctness Total time: {time.time() - st}')
 
-        # Filter out examples where all candidates have the same correctness (all 1 or all 0)
         filtered_indices = []
         for i, question_correctness in enumerate(correctness):
-            # Check if all answers are the same (all correct or all incorrect)
             unique_values = set(question_correctness)
-            if len(unique_values) > 1:  # Mixed correctness values
+            if len(unique_values) > 1:
                 filtered_indices.append(i)
-
         if not filtered_indices:
             print(f"[Step {step}] No mixed correctness examples found, skipping this batch")
             continue
-
         print(f"[Step {step}] Filtered from {len(questions)} to {len(filtered_indices)} examples with mixed correctness")
 
-        # Filter all data structures based on the filtered indices
         questions = [questions[i] for i in filtered_indices]
         gold_answers = [gold_answers[i] for i in filtered_indices]
         candidates = [candidates[i] for i in filtered_indices]
         correctness = [correctness[i] for i in filtered_indices]
 
-        #filter non mixed answers
-        flat_solutions = [sol for cand_list in candidates for sol in cand_list]
-
-        # First pass: inference (no grad) over all candidates for each question
-        rm_model.model.eval()
         st = time.time()
-        with torch.no_grad():
-            rm_scores = score_solutions(questions, flat_solutions, rm_model, n_samples, rm_config)
-            print(f'rm_scores Total time: {time.time() - st}')
+        rm_scores = rm_model.score_reference(questions, candidates, rm_config)
+        print(f'rm_scores Total time: {time.time() - st}')
 
-        # Select one positive (correct) and one negative (incorrect) per question based on first-pass scores
-        selected_q_pos, selected_s_pos, selected_q_neg, selected_s_neg = [], [], [], []
-        pos_indices, neg_indices = [], []  # store indices per selected pair for debugging
-        for qi, (q, cand_list, corr_list) in enumerate(zip(questions, candidates, correctness)):
-            scores_row = rm_scores[qi]
-            # Build lists of indices
-            correct_ids = [j for j, v in enumerate(corr_list) if v == 1]
-            incorrect_ids = [j for j, v in enumerate(corr_list) if v == 0]
-            if not correct_ids or not incorrect_ids:
-                continue
-            # Strategy: hardest positive (lowest score) and hardest negative (highest score)
-            pos_j = min(correct_ids, key=lambda j: scores_row[j])
-            neg_j = max(incorrect_ids, key=lambda j: scores_row[j])
-            selected_q_pos.append(q)
-            selected_s_pos.append(cand_list[pos_j])
-            selected_q_neg.append(q)
-            selected_s_neg.append(cand_list[neg_j])
-            pos_indices.append((qi, pos_j))
-            neg_indices.append((qi, neg_j))
-
-        if not selected_q_pos:
-            print(f"[Step {step}] No valid pos/neg pairs after selection, skipping.")
+        triplets = choose_pos_neg_triplets(questions, candidates, correctness, rm_scores)
+        if not triplets:
+            print(f"[Step {step}] No valid pos/neg triplets after selection, skipping.")
             continue
 
-        # Explicitly release any lingering GPU cache from first pass
-        print('Please check ')
-        torch.cuda.empty_cache()
+        avg_loss, last_lr = rm_model.train_step(triplets, accel)
+        print(f"[Step {step}] Loss: {avg_loss:.4f}, LR: {last_lr:.2e}, Triplets: {len(triplets)}")
 
-        # Second pass: gradient-enabled scoring only for selected pairs
-        rm_model.model.train()
-        with accel.accumulate(rm_model):
-            r_pos = score_question_solution_list(selected_q_pos, selected_s_pos, rm_model, rm_config)
-            r_neg = score_question_solution_list(selected_q_neg, selected_s_neg, rm_model, rm_config)
-            # Ensure shapes align
-            assert r_pos.shape == r_neg.shape, "Mismatch in pos/neg shapes"
-            loss = pairwise_rm_loss(r_pos, r_neg)
-
-            if loss is not None and isinstance(loss, torch.Tensor) and loss.item() > 0:
-                accel.backward(loss)
-                if accel.sync_gradients:
-                    accel.clip_grad_norm_(rm_model.parameters(), grad_clip)
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
-                if step % log_every == 0:
-                    print(f"[Step {step}] Loss: {loss.item():.4f}, LR: {scheduler.get_last_lr()[0]:.2e}, Pairs: {len(r_pos)}")
-            else:
-                print(f"[Step {step}] No valid loss computed (loss={loss})")
-                optimizer.zero_grad()
-            del r_pos, r_neg
-            torch.cuda.empty_cache()
-
-
-        # Log results periodically (log full candidate scores and correctness)
         if step % log_every == 0:
             log_questions(questions, gold_answers, candidates, rm_scores, correctness)
 
-        # Save checkpoint periodically
         if step % save_every == 0 and step > 0:
             checkpoint_path = os.path.join(out_dir, f"checkpoint-{step}")
             accel.save_state(checkpoint_path)
             print(f"[Step {step}] Saved checkpoint to {checkpoint_path}")
 
-        print(f"[Step {step}] Completed batch with {len(questions)} questions. Selected pairs: {len(selected_q_pos)}")
+        print(f"[Step {step}] Completed batch with {len(questions)} questions. Triplets selected: {len(triplets)}")
 
-    # Save final checkpoint
     final_path = os.path.join(out_dir, "final")
     accel.save_state(final_path)
     print(f"Training completed. Final checkpoint saved to {final_path}")
