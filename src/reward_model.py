@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import List, Tuple, Optional, Iterable
+import time
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from accelerate import Accelerator  # added for type hints
