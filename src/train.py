@@ -181,16 +181,13 @@ async def training_loop(config: Dict[str, Any]):
         rm_scores = rm_model.score_reference(questions, candidates, rm_config)
         print(f'rm_scores Total time: {time.time() - st}')
 
-        print('Will wait for 30 seconds')
-        time.sleep(30)
-        print('Done waiting')
-
         triplets = choose_pos_neg_triplets(questions, candidates, correctness, rm_scores)
         if not triplets:
             print(f"[Step {step}] No valid pos/neg triplets after selection, skipping.")
             continue
-
+        st = time.time()
         avg_loss, last_lr = rm_model.train_step(triplets, accel)
+        print(f'rm_model.train_step Total time: {time.time() - st}')
         print(f"[Step {step}] Loss: {avg_loss:.4f}, LR: {last_lr:.2e}, Triplets: {len(triplets)}")
         log_questions(questions, gold_answers, candidates, rm_scores, correctness)
 

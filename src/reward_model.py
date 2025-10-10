@@ -122,7 +122,6 @@ class AceMathRewardModel:
         grad_enabled: bool,
         pad_to_mult8: bool,
     ) -> torch.Tensor:
-        print(len(ids_lists))
         item_dicts = [{"input_ids": ids} for ids in ids_lists]
         batch = self.tokenizer.pad(item_dicts, padding=True, return_tensors="pt")
         batch = {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
@@ -205,6 +204,7 @@ class AceMathRewardModel:
         order = sorted(range(len(inter_ids)), key=lambda i: lengths[i], reverse=True)
         inter_ids_sorted = [inter_ids[i] for i in order]
         # Single forward (kept small by external batching in train_step)
+        print(len(inter_ids_sorted))
         logits = self._collate_and_forward(
             inter_ids_sorted,
             use_amp_bf16=True,
