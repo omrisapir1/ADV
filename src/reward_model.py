@@ -122,6 +122,7 @@ class AceMathRewardModel:
         grad_enabled: bool,
         pad_to_mult8: bool,
     ) -> torch.Tensor:
+        print(len(ids_lists))
         item_dicts = [{"input_ids": ids} for ids in ids_lists]
         batch = self.tokenizer.pad(item_dicts, padding=True, return_tensors="pt")
         batch = {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
