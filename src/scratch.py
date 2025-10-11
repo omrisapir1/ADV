@@ -1,8 +1,8 @@
+import pandas as pd
 import regex as re
 from fractions import Fraction
 from math import isclose
-from typing import Union, Optional, List
-import torch
+from typing import Union, Optional
 
 
 try:
@@ -16,6 +16,7 @@ except Exception:
     parse_expr = None  # type: ignore
     parse_latex = None  # type: ignore
     _SYM_AVAILABLE = False
+_SYM_AVAILABLE = True
 
 try:
     from latex2sympy2 import latex2sympy
@@ -23,8 +24,9 @@ try:
 except Exception:
     latex2sympy = None  # type: ignore
     _LATEX2_AVAILABLE = False
+_LATEX2_AVAILABLE = False
 
-__all__ = ["extract_final_answer", "math_equal", "compute_final_correctness"]
+__all__ = ["extract_final_answer", "math_equal"]
 
 # ---------------- extract_final_answer ----------------
 _BOX = re.compile(r"\\boxed\s*\{(.*?)\}", re.DOTALL | re.IGNORECASE)
@@ -196,27 +198,48 @@ def math_equal(
         pred = _str_to_pmatrix(pred)
     return _symbolic_equal(pred, ref)
 
-def compute_final_correctness(candidates: List[List[str]], gold_answers: List[str]) -> torch.Tensor:
-    """Compute per-candidate correctness vs gold answers.
+def compute_final_correctness(llm_ans, final_ans):
+    llm_extracted = extract_final_answer(llm_ans)
+    return math_equal(llm_extracted,final_ans)
 
-    Args:
-        candidates: List (batch) of lists (num_candidates) with raw solution strings.
-        gold_answers: List of gold final answers (length = batch).
+def f(x):
+    return compute_final_correctness(x[0],x[1])
 
-    Returns:
-        torch.FloatTensor shape [B, N] with 1.0 correct, 0.0 incorrect. Missing candidate -> 0.
-    """
-    B = len(candidates)
-    if len(gold_answers) != B:
-        raise ValueError("gold_answers length must match candidates batch size")
-    if B == 0:
-        return torch.zeros(0, 0)
-    N = max((len(row) for row in candidates), default=0)
-    out = torch.zeros(B, N, dtype=torch.float32)
-    for i, (row, gold_raw) in enumerate(zip(candidates, gold_answers)):
-        gold_extracted = extract_final_answer(gold_raw) or gold_raw
-        for j, cand_raw in enumerate(row):
-            cand_ans = extract_final_answer(cand_raw)
-            if math_equal(cand_ans, gold_extracted):
-                out[i, j] = 1.0
-    return out
+from multiprocessing import get_context
+from itertools import islice
+def chunked(iterable, n):
+    it = iter(iterable)
+    while True:
+        chunk = list(islice(it, n))
+        if not chunk:
+            break
+        yield chunk
+
+def f_chunk(chunk):
+    return [f(x) for x in chunk]
+
+if __name__ == '__main__':
+    from multiprocessing import Pool
+    import time
+    import os
+    df = pd.read_pickle('/Users/omri.sapir/learning/ADV/llm_ans_with_model_answer.pkl')
+    df = df[['final_answer', 'llm_ans']].explode('llm_ans')
+    st = time.time()
+
+    pairs = list(zip(df['llm_ans'].tolist(), df['final_answer'].tolist()))
+    n = len(pairs)  # 4800 for you
+    # pick 4–6 procs on macOS; half of logical cores is a good start
+    logical = os.cpu_count() or 8
+    processes = min(6, max(4, logical // 2))
+
+    # aim for ~3–5 batches per worker
+    target_batches = processes * 4
+    batch_size = max(150, n // target_batches)  # floor, avoid tiny batches
+
+    ctx = get_context('spawn')  # explicit on macOS
+    with ctx.Pool(processes=processes) as p:
+        # chunksize=1 is fine since *we* are already batching big chunks
+        results = []
+        for out in p.imap_unordered(f_chunk, chunked(pairs, batch_size), chunksize=1):
+            results.extend(out)
+    print(time.time() - st)
