@@ -159,6 +159,9 @@ async def training_loop(config: Dict[str, Any]):
         print(f'candidates Total time: {time.time() - st}')
         print(f"[Step {step}] Generated candidates per question: {[len(c) for c in candidates]}")
 
+
+        return candidates, gold_answers
+
         import pandas as pd
         df = pd.read_pickle('/workspace/ADV/llm_ans_with_model_answer.pkl')
         st = time.time()
