@@ -160,21 +160,13 @@ async def training_loop(config: Dict[str, Any]):
         print(f"[Step {step}] Generated candidates per question: {[len(c) for c in candidates]}")
 
 
-        return candidates, gold_answers
-
-        import pandas as pd
-        df = pd.read_pickle('/workspace/ADV/llm_ans_with_model_answer.pkl')
-        st = time.time()
-        res = compute_final_correctness(df['llm_ans'].tolist(), df['final_answer'].tolist())
-        print(f'compute_final_correctness Total time: {time.time() - st}')
-
-
 
 
 
         st = time.time()
         correctness = compute_final_correctness(candidates, gold_answers)
         print(f'correctness Total time: {time.time() - st}')
+        return candidates, gold_answers
 
         filtered_indices = []
         for i, question_correctness in enumerate(correctness):
