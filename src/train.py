@@ -125,17 +125,23 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
 def choose_pos_neg_triplets(
     questions: List[str],
     candidates: List[List[str]],
-    correctness: List[List[int]],
+    correctness: Any,  # can be List[List[int]] or torch.Tensor
     rm_scores: torch.Tensor,
 ) -> List[Tuple[str, str, str]]:
     """Return triplets (question, pos_solution, neg_solution) selecting hardest pos (lowest score among correct)
     and hardest neg (highest score among incorrect) for each question with mixed correctness.
+    Accepts correctness as list-of-lists or padded tensor.
     """
     triplets: List[Tuple[str, str, str]] = []
-    for qi, (q, cand_list, corr_list) in enumerate(zip(questions, candidates, correctness)):
+    is_tensor = isinstance(correctness, torch.Tensor)
+    for qi, (q, cand_list) in enumerate(zip(questions, candidates)):
+        if is_tensor:
+            row_flags = [int(correctness[qi, j].item()) for j in range(len(cand_list))]
+        else:
+            row_flags = correctness[qi]
         scores_row = rm_scores[qi]
-        correct_ids = [j for j, v in enumerate(corr_list) if v == 1]
-        incorrect_ids = [j for j, v in enumerate(corr_list) if v == 0]
+        correct_ids = [j for j, v in enumerate(row_flags) if v == 1]
+        incorrect_ids = [j for j, v in enumerate(row_flags) if v == 0]
         if not correct_ids or not incorrect_ids:
             continue
         pos_j = min(correct_ids, key=lambda j: scores_row[j])
@@ -185,7 +191,7 @@ async def training_loop(config: Dict[str, Any]):
 
 
         st = time.time()
-        correctness = compute_final_correctness(candidates, gold_answers)
+        correctness = compute_final_correctness(candidates, gold_answers)  # now list of lists
         print(f'correctness Total time: {time.time() - st}')
 
 
@@ -203,13 +209,20 @@ async def training_loop(config: Dict[str, Any]):
         questions = [questions[i] for i in filtered_indices]
         gold_answers = [gold_answers[i] for i in filtered_indices]
         candidates = [candidates[i] for i in filtered_indices]
-        correctness = [correctness[i] for i in filtered_indices]
+        correctness_filtered_list = [correctness[i] for i in filtered_indices]
+
+        # Convert correctness to padded tensor after filtering
+        max_k = max((len(row) for row in candidates), default=0)
+        correctness_tensor = torch.zeros(len(candidates), max_k, dtype=torch.int32)
+        for qi, row in enumerate(correctness_filtered_list):
+            correctness_tensor[qi, :len(row)] = torch.tensor(row, dtype=torch.int32)
+        print(f"[Step {step}] correctness tensor shape: {correctness_tensor.shape}")
 
         st = time.time()
         rm_scores = rm_model.score_reference(questions, candidates, rm_config)
         print(f'rm_scores Total time: {time.time() - st}')
 
-        triplets = choose_pos_neg_triplets(questions, candidates, correctness, rm_scores)
+        triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
         if not triplets:
             print(f"[Step {step}] No valid pos/neg triplets after selection, skipping.")
             continue
@@ -217,7 +230,7 @@ async def training_loop(config: Dict[str, Any]):
         avg_loss, last_lr = rm_model.train_step(triplets, accel)
         print(f'rm_model.train_step Total time: {time.time() - st}')
         print(f"[Step {step}] Loss: {avg_loss:.4f}, LR: {last_lr:.2e}, Triplets: {len(triplets)}")
-        log_questions(questions, gold_answers, candidates, rm_scores, correctness)
+        log_questions(questions, gold_answers, candidates, rm_scores, correctness_filtered_list)
 
         if step % save_every == 0 and step > 0:
             checkpoint_path = os.path.join(out_dir, f"checkpoint-{step}")

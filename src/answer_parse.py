@@ -2,7 +2,6 @@ import regex as re
 from fractions import Fraction
 from math import isclose
 from typing import Union, Optional, List
-import torch
 
 _COMMA = re.compile(",")
 _PCT_END = re.compile(r"(?:\\?%)\s*$")
@@ -61,18 +60,18 @@ def math_equal(pred: Union[str, float, int, None],
            _numeric_equal(p_num, r_num * 100.0, rel=rel_tol) or \
            _numeric_equal(p_num, r_num / 100.0, rel=rel_tol)
 
-def compute_final_correctness(candidates: List[List[str]], gold_answers: List[str]) -> torch.Tensor:
+def compute_final_correctness(candidates: List[List[str]], gold_answers: List[str]) -> List[List[int]]:
     B = len(candidates)
     if len(gold_answers) != B:
         raise ValueError("gold_answers length must match candidates batch size")
     if B == 0:
-        return torch.zeros(0, 0)
-    N = max((len(row) for row in candidates), default=0)
-    out = torch.zeros(B, N, dtype=torch.float32)
+        return []
     gold_extracted = [(extract_final_answer(g) or g) for g in gold_answers]
-    for i, (row, g) in enumerate(zip(candidates, gold_extracted)):
-        for j, cand_raw in enumerate(row):
+    out: List[List[int]] = []
+    for row, g in zip(candidates, gold_extracted):
+        row_flags: List[int] = []
+        for cand_raw in row:
             cand_ans = extract_final_answer(cand_raw)
-            if math_equal(cand_ans, g):
-                out[i, j] = 1.0
+            row_flags.append(1 if math_equal(cand_ans, g) else 0)
+        out.append(row_flags)
     return out
