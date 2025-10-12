@@ -43,6 +43,8 @@ class AceMathRewardModel:
             num_labels=1,
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
+            low_cpu_mem_usage=True,
+            attn_implementation="flash_attention_2",
         ).to(self.device)
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
 
