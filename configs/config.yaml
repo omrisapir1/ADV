@@ -4,7 +4,7 @@ model:
 
 reward_model:
   max_tokens_per_batch_infer: 360000
-  max_seqs_per_infer_batch: 400
+  max_seqs_per_infer_batch: 100
   pad_to_multiple_of_8: true
   skip_batching: true
   optim:
@@ -49,5 +49,5 @@ hardware:
   rm_gpu_id: 0
 
 train:
-  batch_size: 3
+  batch_size: 4
   num_steps: 100
