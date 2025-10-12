@@ -167,6 +167,7 @@ class AceMathRewardModel:
             pad_to_mult8 = bool(rm_config.get("pad_to_multiple_of_8", False))
             max_tokens = int(rm_config.get("max_tokens_per_batch_infer", 64000))
             max_seqs = int(rm_config.get("max_seqs_per_infer_batch", 80))
+            skip_batching = bool(rm_config.get("skip_batching", False))
             meta = []  # (qi, kj, ids, length)
             max_k = 0
             for qi, (q, cand_list) in enumerate(zip(questions, candidates_by_q)):
@@ -176,15 +177,32 @@ class AceMathRewardModel:
                     meta.append((qi, kj, ids, L))
             if not meta:
                 return torch.empty(len(questions), max_k, dtype=torch.float32)
-            # lengths list for packing
             lengths = [m[3] for m in meta]
-            batches = self.pack_by_tokens(lengths, max_tokens, max_seqs)
             scores = torch.empty(len(questions), max_k, dtype=torch.float32)
             scores.fill_(float("nan"))
+
+            if skip_batching:
+                # Single large batch inference (may OOM if too big)
+                ids_lists = [m[2] for m in meta]
+                print(f"[score_reference] skip_batching=True total_seqs={len(ids_lists)} total_tokens={sum(lengths)}")
+                logits = self._collate_and_forward(
+                    ids_lists,
+                    use_amp_bf16=True,
+                    grad_enabled=False,
+                    pad_to_mult8=pad_to_mult8,
+                )
+                logits_cpu = logits.detach().to(dtype=torch.float32, device="cpu")
+                for local_i, (qi, kj, _ids, _L) in enumerate(meta):
+                    scores[qi, kj] = logits_cpu[local_i]
+                del logits, logits_cpu
+                torch.cuda.empty_cache()
+                return scores
+
+            # Packed batching path (default)
+            batches = self.pack_by_tokens(lengths, max_tokens, max_seqs)
             for idxs in batches:
                 batch_meta = [meta[i] for i in idxs]
                 ids_lists = [m[2] for m in batch_meta]
-                # logging batch size and token usage
                 total_tokens = sum(m[3] for m in batch_meta)
                 print(f"[score_reference] batch_size={len(batch_meta)} tokens={total_tokens}")
                 logits = self._collate_and_forward(
