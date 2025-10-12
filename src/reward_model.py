@@ -203,6 +203,7 @@ class AceMathRewardModel:
             for idxs in batches:
                 batch_meta = [meta[i] for i in idxs]
                 ids_lists = [m[2] for m in batch_meta]
+                # logging batch size and token usage
                 total_tokens = sum(m[3] for m in batch_meta)
                 print(f"[score_reference] batch_size={len(batch_meta)} tokens={total_tokens}")
                 logits = self._collate_and_forward(
