@@ -218,6 +218,7 @@ class AceMathRewardModel:
                 for local_i, (qi, kj, _ids, _L) in enumerate(batch_meta):
                     scores[qi, kj] = logits_cpu[local_i]
                 del logits, logits_cpu, batch_meta, ids_lists
+                torch.cuda.current_stream().synchronize()
                 torch.cuda.empty_cache()
             return scores
 
