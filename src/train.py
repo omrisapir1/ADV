@@ -192,6 +192,7 @@ async def training_loop(config: Dict[str, Any]):
         filtered_indices = []
         for i, question_correctness in enumerate(correctness):
             unique_values = set(question_correctness)
+            print(f'question_correctness for question {i}: {question_correctness}, unique values: {unique_values}')
             if len(unique_values) > 1:
                 filtered_indices.append(i)
         if not filtered_indices:
