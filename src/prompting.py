@@ -1,6 +1,6 @@
 from typing import List
 from transformers import AutoTokenizer, AutoModelForCausalLM
-import torch
+
 
 def build_prompt(question: str, tokenizer: AutoTokenizer) -> str:
     messages = [
