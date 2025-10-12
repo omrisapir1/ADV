@@ -45,8 +45,10 @@ def get_batch_records(dataset_obj, batch_size: int, step: int) -> List[Dict[str,
 
 
 def log_questions(questions: List[str], gold_answers: List[str], candidates: List[List[str]], rm_scores: torch.Tensor, correctness: List[List[bool]]):
-    """Log training results to disk in JSON format."""
+    """Log training results to disk in JSON format.
 
+    Ensures all tensor / non-serializable types are converted to native Python types.
+    """
     # Create logs directory if it doesn't exist
     log_dir = "/workspace/ADV/src/data"
     os.makedirs(log_dir, exist_ok=True)
@@ -65,12 +67,34 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
     # Process each question in the batch
     for i, (question, gold_answer) in enumerate(zip(questions, gold_answers)):
         # Safely extract rm_scores for this question
-        question_rm_scores = []
+        question_rm_scores: List[float] = []
         if i < len(rm_scores):
-            if isinstance(rm_scores[i], torch.Tensor):
-                question_rm_scores = rm_scores[i].cpu().detach().tolist()
+            row = rm_scores[i]
+            # row could be a tensor of shape [num_candidates] or something iterable
+            if isinstance(row, torch.Tensor):
+                # Flatten if needed then convert
+                question_rm_scores = row.detach().cpu().flatten().tolist()
             else:
-                question_rm_scores = list(rm_scores[i])
+                # Fallback: iterate and convert any tensor elements
+                tmp = []
+                for v in row:
+                    if isinstance(v, torch.Tensor):
+                        tmp.append(float(v.detach().cpu().item()))
+                    else:
+                        tmp.append(float(v))
+                question_rm_scores = tmp
+
+        # Convert correctness list items to plain ints (0/1) / bools
+        raw_corr = correctness[i] if i < len(correctness) else []
+        corr_list: List[int] = []
+        for c in raw_corr:
+            if isinstance(c, torch.Tensor):
+                # Assume 0-d tensor
+                corr_list.append(int(c.item()))
+            else:
+                # bool or int
+                corr_list.append(int(c))
+        correct_count = int(sum(corr_list))
 
         question_data = {
             "question_id": i,
@@ -78,16 +102,16 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
             "gold_answer": gold_answer,
             "candidates": candidates[i] if i < len(candidates) else [],
             "rm_scores": question_rm_scores,
-            "correctness": correctness[i] if i < len(correctness) else [],
+            "correctness": corr_list,
             "num_candidates": len(candidates[i]) if i < len(candidates) else 0,
             "avg_rm_score": float(sum(question_rm_scores) / len(question_rm_scores)) if question_rm_scores else 0.0,
-            "correct_count": sum(correctness[i]) if i < len(correctness) else 0
+            "correct_count": correct_count
         }
 
         try:
             json.dumps(question_data)
-        except:
-            print(f"Error serializing question data: {question_data}")
+        except Exception as e:
+            print(f"Error serializing question data (id={i}): {e}\nData: {question_data}")
             continue
         log_data["questions"].append(question_data)
 

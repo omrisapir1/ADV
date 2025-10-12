@@ -4,7 +4,7 @@ model:
 
 reward_model:
   max_tokens_per_batch_infer: 200000
-  max_seqs_per_infer_batch: 160
+  max_seqs_per_infer_batch: 240
   pad_to_multiple_of_8: true
   optim:
     name: adamw
