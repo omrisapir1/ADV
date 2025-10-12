@@ -136,6 +136,24 @@ class AceMathRewardModel:
             logits = out.logits.squeeze(-1).to(dtype=torch.float32)
         return logits
 
+    @staticmethod
+    def pack_by_tokens(lengths: List[int], max_tokens_per_batch: int, max_seqs_per_batch: int) -> List[List[int]]:
+        order = sorted(range(len(lengths)), key=lambda i: lengths[i], reverse=True)
+        batches: List[List[int]] = []
+        cur: List[int] = []
+        cur_tokens = 0
+        for i in order:
+            L = lengths[i]
+            if cur and (cur_tokens + L > max_tokens_per_batch or len(cur) >= max_seqs_per_batch):
+                batches.append(cur)
+                cur = []
+                cur_tokens = 0
+            cur.append(i)
+            cur_tokens += L
+        if cur:
+            batches.append(cur)
+        return batches
+
     # ------------------------- Public inference scoring -------------------------
     def score_reference(
         self,
@@ -146,9 +164,10 @@ class AceMathRewardModel:
         self.model.eval()
         with torch.no_grad():
             rm_config = rm_config or self.rm_config
-            ref_bs = rm_config.get("reference_batch_size", 8)
             pad_to_mult8 = bool(rm_config.get("pad_to_multiple_of_8", False))
-            meta = []
+            max_tokens = int(rm_config.get("max_tokens_per_batch_infer", 64000))
+            max_seqs = int(rm_config.get("max_seqs_per_infer_batch", 80))
+            meta = []  # (qi, kj, ids, length)
             max_k = 0
             for qi, (q, cand_list) in enumerate(zip(questions, candidates_by_q)):
                 max_k = max(max_k, len(cand_list))
@@ -157,13 +176,17 @@ class AceMathRewardModel:
                     meta.append((qi, kj, ids, L))
             if not meta:
                 return torch.empty(len(questions), max_k, dtype=torch.float32)
-            meta.sort(key=lambda t: t[3], reverse=True)
+            # lengths list for packing
+            lengths = [m[3] for m in meta]
+            batches = self.pack_by_tokens(lengths, max_tokens, max_seqs)
             scores = torch.empty(len(questions), max_k, dtype=torch.float32)
             scores.fill_(float("nan"))
-            for start in range(0, len(meta), ref_bs):
-                end = min(start + ref_bs, len(meta))
-                batch_meta = meta[start:end]
+            for idxs in batches:
+                batch_meta = [meta[i] for i in idxs]
                 ids_lists = [m[2] for m in batch_meta]
+                # logging batch size and token usage
+                total_tokens = sum(m[3] for m in batch_meta)
+                print(f"[score_reference] batch_size={len(batch_meta)} tokens={total_tokens}")
                 logits = self._collate_and_forward(
                     ids_lists,
                     use_amp_bf16=True,
@@ -205,8 +228,6 @@ class AceMathRewardModel:
         order = sorted(range(len(inter_ids)), key=lambda i: lengths[i], reverse=True)
         inter_ids_sorted = [inter_ids[i] for i in order]
 
-        print(len(inter_ids_sorted))
-        time.sleep(1)
         logits = self._collate_and_forward(
             inter_ids_sorted,
             use_amp_bf16=True,
