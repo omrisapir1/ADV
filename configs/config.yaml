@@ -3,7 +3,7 @@ model:
   rm_name: nvidia/AceMath-7B-RM
 
 reward_model:
-  max_tokens_per_batch_infer: 360000
+  max_tokens_per_batch_infer: 320000
   max_seqs_per_infer_batch: 400
   pad_to_multiple_of_8: true
   skip_batching: false
