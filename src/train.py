@@ -222,7 +222,7 @@ async def training_loop(config: Dict[str, Any]):
         st = time.time()
         correctness = compute_final_correctness(candidate_texts, gold_answers)  # list of lists (0/1)
         # Silenced log output
-        # print(f'correctness Total time: {time.time() - st}')
+        print(f'correctness Total time: {time.time() - st}')
 
         # Filter out candidates that are invalid (valid_flag==0) yet marked correct (correctness==1).
         filtered_candidate_texts: List[List[str]] = []
@@ -274,6 +274,7 @@ async def training_loop(config: Dict[str, Any]):
         rm_scores = rm_model.score_reference(questions, candidates, rm_config)
         # Silenced log output
         print(f'rm_scores Total time: {time.time() - st}')
+
 
         triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
         if not triplets:
