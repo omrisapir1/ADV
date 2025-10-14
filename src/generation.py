@@ -6,6 +6,7 @@ import os
 from typing import List, Dict, Any, Optional, Tuple
 from openai import AsyncOpenAI
 from openai._exceptions import APIStatusError, RateLimitError
+import re
 
 THINK_STOP = "</think>"
 
@@ -136,7 +137,7 @@ class AsyncSGLangEngineWrapper:
             finish_reason = getattr(choice, "finish_reason", None)
 
             # Only proceed to Phase 2 if we actually stopped on THINK_STOP
-            if finish_reason != "stop":
+            if finish_reason != "stop" or re.findall(r"\\boxed\s*\{(.*?)\}", think_piece or "", flags=re.DOTALL):
                 results.append((think_piece, 0))
                 continue
 
