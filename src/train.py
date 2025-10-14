@@ -208,9 +208,8 @@ async def training_loop(config: Dict[str, Any]):
         gold_answers = [r[a_field] for r in records]
         prompts = build_prompts(questions, tokenizer)
         st = time.time()
-        print(prompts)
-        raise 
         raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **gen_cfg)
+        print(f'Candidate generation Total time: {time.time() - st}')
         # raw_candidates: List[List[(text, valid_flag)]] where valid_flag=1 if phase-2 executed, else 0
         # Extract candidate texts and validity flags
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
@@ -274,7 +273,7 @@ async def training_loop(config: Dict[str, Any]):
         st = time.time()
         rm_scores = rm_model.score_reference(questions, candidates, rm_config)
         # Silenced log output
-        # print(f'rm_scores Total time: {time.time() - st}')
+        print(f'rm_scores Total time: {time.time() - st}')
 
         triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
         if not triplets:
