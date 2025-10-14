@@ -208,18 +208,40 @@ async def training_loop(config: Dict[str, Any]):
         gold_answers = [r[a_field] for r in records]
         prompts = build_prompts(questions, tokenizer)
         st = time.time()
-        candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **gen_cfg)
+        raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **gen_cfg)
+        # raw_candidates: List[List[(text, valid_flag)]] where valid_flag=1 if phase-2 executed, else 0
+        # Extract candidate texts and validity flags
+        candidate_texts = [[c[0] for c in row] for row in raw_candidates]
+        candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
         # Silenced log output
         # print(f'candidates Total time: {time.time() - st}')
-        # print(f"[Step {step}] Generated candidates per question: {[len(c) for c in candidates]}")
+        # print(f"[Step {step}] Generated candidates per question: {[len(c) for c in candidate_texts]}")
 
-
+        # Compute correctness on the raw candidate texts
         st = time.time()
-        correctness = compute_final_correctness(candidates, gold_answers)  # now list of lists
+        correctness = compute_final_correctness(candidate_texts, gold_answers)  # list of lists (0/1)
         # Silenced log output
         # print(f'correctness Total time: {time.time() - st}')
 
+        # Filter out candidates that are invalid (valid_flag==0) yet marked correct (correctness==1).
+        filtered_candidate_texts: List[List[str]] = []
+        filtered_correctness: List[List[int]] = []
+        for qi, (texts_row, flags_row, corr_row) in enumerate(zip(candidate_texts, candidate_valid_flags, correctness)):
+            new_texts: List[str] = []
+            new_corr: List[int] = []
+            for t, f, corr in zip(texts_row, flags_row, corr_row):
+                # Drop only if candidate invalid (f==0) but correctness says it's correct (corr==1)
+                if f == 0 and corr == 1:
+                    continue
+                new_texts.append(t)
+                new_corr.append(corr)
+            filtered_candidate_texts.append(new_texts)
+            filtered_correctness.append(new_corr)
+        # Replace working variables with filtered versions
+        candidates = filtered_candidate_texts
+        correctness = filtered_correctness
 
+        # Identify questions with mixed correctness (both 0 and 1 present after filtering)
         filtered_indices = []
         for i, question_correctness in enumerate(correctness):
             unique_values = set(question_correctness)

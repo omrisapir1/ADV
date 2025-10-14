@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import random
 import os
@@ -90,7 +92,6 @@ class AsyncSGLangEngineWrapper:
             text = text.split(THINK_STOP, 1)[0]
         context = prefix + text + THINK_STOP
         return context, text
-
     async def _two_phase_for_one_prompt(
         self,
         base_prompt: str,
@@ -102,86 +103,83 @@ class AsyncSGLangEngineWrapper:
         think_max_new_tokens: int,
         think_top_k: int,
         think_repetition_penalty: float,
-        think_extra_body: Optional[Dict[str, Any]],
-        # Phase 2 (answer) params
         answer_max_new_tokens: int,
-        answer_stop: Optional[List[str]],
-        answer_extra_body: Optional[Dict[str, Any]],
-        # Return control
-        return_split: bool,
-    ) -> List[str] | List[Dict[str, str]]:
+    ) -> List[tuple[str, int]]:
         """
         Two-phase generation for a single prompt:
           - Phase 1: sample until </think>
           - Phase 2: greedy continuation to the end (or until answer_stop)
+        Returns:
+          List of (text, flag), flag=1 if Phase-2 executed, else 0.
         """
-        # ------ Phase 1: sample until </think> ------
-        phase1 = await self._completions_call(
+        THINK_STOP = "</think>"
+
+        # ---------- Phase 1: sample until </think> ----------
+        payload_extra_1 = {"top_k": think_top_k, "repetition_penalty": think_repetition_penalty}
+
+        resp1 = await self.client.completions.create(
+            model=self.model_name,
             prompt=base_prompt,
             n=n_samples,
             temperature=think_temperature,
             top_p=think_top_p,
             max_tokens=think_max_new_tokens,
-            stop=[THINK_STOP],  # critical: cut exactly at </think>
-            top_k=think_top_k,
-            repetition_penalty=think_repetition_penalty,
-            extra_body=think_extra_body,
+            stop=[THINK_STOP],
+            extra_body=payload_extra_1,
         )
 
-        # ------ Phase 2: greedy continuation for each sample ------
-        outputs = []
-        for t in phase1:
-            # Build exact continuation context: <prompt> + <think> + </think>
-            context, think_clean = self._ensure_think_stop_in_context(base_prompt, t)
+        results: List[tuple[str, int]] = []
 
-            # Greedy / deterministic params
-            greedy_temperature = 0.0
-            greedy_top_p = 1.0
-            greedy_top_k = 0
-            greedy_rep = 1.0
+        # ---------- Phase 2: conditionally greedy per sample ----------
+        for choice in resp1.choices:
+            think_piece = (choice.text or "")
+            finish_reason = getattr(choice, "finish_reason", None)
 
-            ans_list = await self._completions_call(
-                prompt=context,
-                n=1,  # one greedy continuation per thought
-                temperature=greedy_temperature,
-                top_p=greedy_top_p,
-                max_tokens=answer_max_new_tokens,
-                stop=answer_stop,
-                top_k=greedy_top_k,
-                repetition_penalty=greedy_rep,
-                extra_body=answer_extra_body,
-            )
-            answer = ans_list[0] if ans_list else ""
+            # Only proceed to Phase 2 if we actually stopped on THINK_STOP
+            if finish_reason != "stop":
+                results.append((think_piece, 0))
+                continue
 
-            if return_split:
-                outputs.append({"think": think_clean, "answer": answer, "full": think_clean + THINK_STOP + answer})
+            # Build continuation context ending with exactly one THINK_STOP
+            if THINK_STOP in think_piece:
+                think_clean = think_piece.split(THINK_STOP, 1)[0]
             else:
-                outputs.append(think_clean + THINK_STOP + answer)
+                think_clean = think_piece
+            context = base_prompt + think_clean + THINK_STOP
 
-        return outputs
+            # Greedy params
+            payload_extra_2 = {"top_k": 0, "repetition_penalty": 1.0}
+
+            resp2 = await self.client.completions.create(
+                model=self.model_name,
+                prompt=context,
+                n=1,
+                temperature=0.0,
+                top_p=1.0,
+                max_tokens=answer_max_new_tokens,
+                extra_body=payload_extra_2,
+            )
+
+            answer_text = (resp2.choices[0].text or "") if resp2.choices else ""
+            full_text = think_clean + THINK_STOP + answer_text
+
+            results.append((full_text, 1))
+
+        return results
+
 
     async def generate_candidates(
         self,
         prompts: List[str],
         n_samples: int,
         **gen_cfg: Any,
-    ) -> List[List[str]]:
+    ) -> List[List[tuple[str, int]]]:
         """
         Default behavior: TWO-PHASE generation.
         - Phase 1 (sampling): until </think>
         - Phase 2 (greedy): deterministic continuation
-
-        Config keys (with defaults):
-          think_temperature: 0.9
-          think_top_p: 0.95
-          think_top_k: 0
-          think_repetition_penalty: 1.05
-          think_max_new_tokens: 512
-          answer_max_new_tokens: 512
-          answer_stop: None or list[str]
-          extra_body_think: dict | None
-          extra_body_answer: dict | None
-          return_split: False  # if True, returns dicts with {think, answer, full}
+        Returns:
+          List[List[(text, flag)]] aligned with `prompts`.
         """
         # Phase 1 (thinking) config
         think_temperature = float(gen_cfg.get("think_temperature", gen_cfg.get("temperature", 0.9)))
@@ -189,14 +187,9 @@ class AsyncSGLangEngineWrapper:
         think_top_k = int(gen_cfg.get("think_top_k", gen_cfg.get("top_k", 0)))
         think_repetition_penalty = float(gen_cfg.get("think_repetition_penalty", gen_cfg.get("repetition_penalty", 1.05)))
         think_max_new_tokens = int(gen_cfg.get("think_max_new_tokens", 512))
-        extra_body_think = gen_cfg.get("extra_body_think", gen_cfg.get("extra_body"))
 
         # Phase 2 (answer) config
         answer_max_new_tokens = int(gen_cfg.get("answer_max_new_tokens", 512))
-        answer_stop = gen_cfg.get("answer_stop")  # e.g. ["\n\n###"] or None
-        extra_body_answer = gen_cfg.get("extra_body_answer")
-
-        return_split = bool(gen_cfg.get("return_split", False))
 
         tasks = [
             asyncio.create_task(
@@ -208,17 +201,12 @@ class AsyncSGLangEngineWrapper:
                     think_max_new_tokens=think_max_new_tokens,
                     think_top_k=think_top_k,
                     think_repetition_penalty=think_repetition_penalty,
-                    think_extra_body=extra_body_think,
                     answer_max_new_tokens=answer_max_new_tokens,
-                    answer_stop=answer_stop,
-                    answer_extra_body=extra_body_answer,
-                    return_split=return_split,
                 )
             )
             for p in prompts
         ]
-        per_prompt_lists = await asyncio.gather(*tasks)
-        # Shape: List[ List[str|dict] ], aligned with `prompts`
+        per_prompt_lists: List[List[tuple[str, int]]] = await asyncio.gather(*tasks)
         return per_prompt_lists
 
 
