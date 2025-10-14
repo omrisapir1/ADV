@@ -94,20 +94,18 @@ class AsyncSGLangEngineWrapper:
         context = prefix + text + THINK_STOP
         return context, text
 
-
-
     async def _two_phase_for_one_prompt(
-        self,
-        base_prompt: str,
-        *,
-        n_samples: int,
-        # Phase 1 (thinking) params
-        think_temperature: float,
-        think_top_p: float,
-        think_max_new_tokens: int,
-        think_top_k: int,
-        think_repetition_penalty: float,
-        answer_max_new_tokens: int,
+            self,
+            base_prompt: str,
+            *,
+            n_samples: int,
+            # Phase 1 (thinking) params
+            think_temperature: float,
+            think_top_p: float,
+            think_max_new_tokens: int,
+            think_top_k: int,
+            think_repetition_penalty: float,
+            answer_max_new_tokens: int,
     ) -> List[tuple[str, int]]:
         """
         Two-phase generation for a single prompt:
@@ -132,31 +130,36 @@ class AsyncSGLangEngineWrapper:
             extra_body=payload_extra_1,
         )
 
-        results: List[tuple[str, int]] = []
+        # Prepare outputs with placeholders (to keep original order)
+        results: List[tuple[str, int]] = [("", 0)] * len(resp1.choices)
 
-        # ---------- Phase 2: conditionally greedy per sample ----------
-        for choice in resp1.choices:
+        # Collect contexts that are eligible for Phase-2 (run concurrently)
+        phase2_items = []  # list of (idx, think_clean, context)
+        for idx, choice in enumerate(resp1.choices):
             think_piece = (choice.text or "")
             finish_reason = getattr(choice, "finish_reason", None)
 
-            # Only proceed to Phase 2 if we actually stopped on THINK_STOP
+            # Not eligible for Phase-2 if didn't stop on THINK_STOP OR already contains \boxed{...}
             if finish_reason != "stop" or re.findall(r"\\boxed\s*\{(.*?)\}", think_piece or "", flags=re.DOTALL):
-                results.append((think_piece, 0))
+                results[idx] = (think_piece, 0)
                 continue
 
             # Build continuation context ending with exactly one THINK_STOP
-            if THINK_STOP in think_piece:
-                think_clean = think_piece.split(THINK_STOP, 1)[0]
-            else:
-                think_clean = think_piece
+            think_clean = think_piece.split(THINK_STOP, 1)[0] if THINK_STOP in think_piece else think_piece
             context = base_prompt + think_clean + THINK_STOP
+            phase2_items.append((idx, think_clean, context))
 
-            # Greedy params
-            payload_extra_2 = {"top_k": 0, "repetition_penalty": 1.0}
+        # If nothing to continue, return early
+        if not phase2_items:
+            return results
 
-            resp2 = await self.client.completions.create(
+        # ---------- Phase 2: run all greedy continuations concurrently ----------
+        payload_extra_2 = {"top_k": 0, "repetition_penalty": 1.0}
+
+        async def _greedy(ctx: str):
+            return await self.client.completions.create(
                 model=self.model_name,
-                prompt=context,
+                prompt=ctx,
                 n=1,
                 temperature=0.0,
                 top_p=1.0,
@@ -164,13 +167,16 @@ class AsyncSGLangEngineWrapper:
                 extra_body=payload_extra_2,
             )
 
+        tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx in phase2_items]
+        resp2_list = await asyncio.gather(*tasks)
+
+        # Stitch results back in original order
+        for (idx, think_clean, _), resp2 in zip(phase2_items, resp2_list):
             answer_text = (resp2.choices[0].text or "") if resp2.choices else ""
             full_text = think_clean + THINK_STOP + answer_text
-
-            results.append((full_text, 1))
+            results[idx] = (full_text, 1)
 
         return results
-
 
     async def generate_candidates(
         self,
