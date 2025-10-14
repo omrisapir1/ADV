@@ -208,6 +208,8 @@ async def training_loop(config: Dict[str, Any]):
         gold_answers = [r[a_field] for r in records]
         prompts = build_prompts(questions, tokenizer)
         st = time.time()
+        print(prompts)
+        raise 
         raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **gen_cfg)
         # raw_candidates: List[List[(text, valid_flag)]] where valid_flag=1 if phase-2 executed, else 0
         # Extract candidate texts and validity flags
