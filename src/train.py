@@ -203,6 +203,8 @@ async def training_loop(config: Dict[str, Any]):
     ensure_empty_log_dir(LOG_DIR)
 
     for step in range(num_steps):
+        if step <10:
+            continue
         records = get_batch_records(dataset_obj, batch_size, step)
         questions = [r[q_field] for r in records]
         gold_answers = [r[a_field] for r in records]
