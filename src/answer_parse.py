@@ -79,7 +79,7 @@ def compute_final_correctness(candidates: List[List[str]], gold_answers: List[st
         raise ValueError("gold_answers length must match candidates batch size")
     if B == 0:
         return []
-    gold_extracted = [(extract_final_answer(g) or g) for g in gold_answers]
+    gold_extracted = [(extract_final_answer(g)[0] or g) for g in gold_answers]
     out: List[List[int]] = []
     for row, g in zip(candidates, gold_extracted):
         row_flags: List[int] = []
