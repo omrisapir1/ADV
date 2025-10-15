@@ -53,5 +53,5 @@ hardware:
   rm_gpu_id: 0
 
 train:
-  batch_size: 32
+  batch_size: 24
   num_steps: 100
