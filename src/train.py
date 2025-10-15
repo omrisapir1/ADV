@@ -203,15 +203,13 @@ async def training_loop(config: Dict[str, Any]):
     ensure_empty_log_dir(LOG_DIR)
 
     for step in range(num_steps):
-        if step <10:
-            continue
         records = get_batch_records(dataset_obj, batch_size, step)
         questions = [r[q_field] for r in records]
         gold_answers = [r[a_field] for r in records]
         prompts = build_prompts(questions, tokenizer)
         st = time.time()
         raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **gen_cfg)
-        print(f'Candidate generation Total time: {time.time() - st}')
+        # print(f'Candidate generation Total time: {time.time() - st}')
         # raw_candidates: List[List[(text, valid_flag)]] where valid_flag=1 if phase-2 executed, else 0
         # Extract candidate texts and validity flags
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
@@ -224,8 +222,8 @@ async def training_loop(config: Dict[str, Any]):
         st = time.time()
         correctness = compute_final_correctness(candidate_texts, gold_answers)  # list of lists (0/1)
         # Silenced log output
-        print(f'correctness Total time: {time.time() - st}')
-        print(f'correctness: {correctness}')
+        # print(f'correctness Total time: {time.time() - st}')
+        # print(f'correctness: {correctness}')
 
         # Filter out candidates that are invalid (valid_flag==0) yet marked correct (correctness==1).
         filtered_candidate_texts: List[List[str]] = []
@@ -251,7 +249,7 @@ async def training_loop(config: Dict[str, Any]):
             unique_values = set(question_correctness)
             # Silenced log output
             # print(f'question_correctness for question {i}: {question_correctness}, unique values: {unique_values}')
-            print(f'unique values: {unique_values}')
+            # print(f'unique values: {unique_values}')
             if 1 in unique_values and 0 in unique_values:
                 filtered_indices.append(i)
         if not filtered_indices:
@@ -277,7 +275,7 @@ async def training_loop(config: Dict[str, Any]):
         st = time.time()
         rm_scores = rm_model.score_reference(questions, candidates, rm_config)
         # Silenced log output
-        print(f'rm_scores Total time: {time.time() - st}')
+        # print(f'rm_scores Total time: {time.time() - st}')
 
 
         triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
