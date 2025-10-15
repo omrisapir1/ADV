@@ -228,7 +228,7 @@ class AceMathRewardModel:
             r_pos, r_neg = self.score_pairs(batch_q, batch_pos, batch_neg, self.rm_config)
             assert r_pos.shape == r_neg.shape
             loss = pairwise_rm_loss(r_pos, r_neg)
-            accelerator.backward(loss)
+            # accelerator.backward(loss)
             total_loss += loss.detach().item()
             num_batches += 1
             del r_pos, r_neg, loss, batch_q, batch_pos, batch_neg, batch
