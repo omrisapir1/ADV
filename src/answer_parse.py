@@ -45,7 +45,7 @@ def extract_final_answer(llm_output: str) -> Optional[str]:
     if matches:
         last_match = matches[-1]
         start_idx = last_match.start()
-        return last_match.group(0).strip(),  'boxed' in llm_output[start_idx+1:].lower()
+        return last_match.group(1).strip(),  'boxed' in llm_output[start_idx+5:].lower()
     lines = [ln.strip() for ln in (llm_output or "").splitlines() if ln.strip()]
     return lines[-1] if lines else None, False
 
@@ -79,9 +79,9 @@ def compute_final_correctness(candidates: List[List[str]], gold_answers: List[st
         raise ValueError("gold_answers length must match candidates batch size")
     if B == 0:
         return []
-    gold_extracted = [(extract_final_answer(g)[0] or g) for g in gold_answers]
+
     out: List[List[int]] = []
-    for row, g in zip(candidates, gold_extracted):
+    for row, g in zip(candidates, gold_answers):
         row_flags: List[int] = []
         for cand_raw in row:
             cand_ans, can_only_be_zero = extract_final_answer(cand_raw)
