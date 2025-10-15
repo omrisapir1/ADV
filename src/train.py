@@ -250,6 +250,7 @@ async def training_loop(config: Dict[str, Any]):
             unique_values = set(question_correctness)
             # Silenced log output
             # print(f'question_correctness for question {i}: {question_correctness}, unique values: {unique_values}')
+            print(f'unique values: {unique_values}')
             if 1 in unique_values and 0 in unique_values:
                 filtered_indices.append(i)
         if not filtered_indices:
