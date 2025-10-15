@@ -225,6 +225,7 @@ async def training_loop(config: Dict[str, Any]):
         correctness = compute_final_correctness(candidate_texts, gold_answers)  # list of lists (0/1)
         # Silenced log output
         print(f'correctness Total time: {time.time() - st}')
+        print(f'correctness: {correctness}')
 
         # Filter out candidates that are invalid (valid_flag==0) yet marked correct (correctness==1).
         filtered_candidate_texts: List[List[str]] = []

@@ -35,7 +35,7 @@ dataset:
   field_answer: final_answer
 
 generation:
-  n_samples_per_problem: 96
+  n_samples_per_problem: 124
 
   # ---- Phase 1 (thinking) ----
   think_temperature: 1.3
