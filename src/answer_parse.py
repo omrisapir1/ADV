@@ -58,7 +58,7 @@ def math_equal(pred: Union[str, float, int, None],
     p_num = _parse_digits(str(pred))
     r_num = _parse_digits(str(ref))
     if p_num is None or r_num is None:
-        if ''.join([c for c in pred if c.isdigit() or c == '.']) == ref:
+        if ''.join([c for c in pred if c.isdigit()]) == ref.replace('.','').replace('-',''):
             return -1
         return 0
     # Allow equality up to 1e-4 relative tolerance or exact match
@@ -68,7 +68,7 @@ def math_equal(pred: Union[str, float, int, None],
         if can_only_be_zero:
             return -1
         return 1
-    if ''.join([c for c in pred if c.isdigit() or c=='.']) == ref:
+    if ''.join([c for c in pred if c.isdigit()]) == ref.replace('.','').replace('-',''):
         return -1
     return 0
 
