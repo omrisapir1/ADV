@@ -238,7 +238,7 @@ class AceMathRewardModel:
         if num_batches:
             if accelerator.sync_gradients:
                 accelerator.clip_grad_norm_(self.model.parameters(), self.grad_clip or 1.0)
-            self.scheduler.step()
+            # self.scheduler.step()
             self.optimizer.zero_grad()
         else:
             self.optimizer.zero_grad()
