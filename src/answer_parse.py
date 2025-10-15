@@ -45,7 +45,7 @@ def extract_final_answer(llm_output: str) -> Optional[str]:
     if matches:
         last_match = matches[-1]
         start_idx = last_match.start()
-        return last_match.group(0).strip(),  'boxed' in llm_output[start_idx:].lower()
+        return last_match.group(0).strip(),  'boxed' in llm_output[start_idx+1:].lower()
     lines = [ln.strip() for ln in (llm_output or "").splitlines() if ln.strip()]
     return lines[-1] if lines else None, False
 
