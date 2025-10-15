@@ -29,7 +29,7 @@ reward_model:
 
 
 dataset:
-  name: omrisap/NuminaMath-5K-TreeRPO            # e.g. "your-username/your-math-dataset" or local path
+  name: omrisap/300K-numina-math          # e.g. "your-username/your-math-dataset" or local path
   split: train
   field_question: problem
   field_answer: final_answer
