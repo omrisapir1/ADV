@@ -284,10 +284,10 @@ async def training_loop(config: Dict[str, Any]):
             # print(f"[Step {step}] No valid pos/neg triplets after selection, skipping.")
             continue
         st = time.time()
-        avg_loss, _ = rm_model.train_step(triplets, accel)
+        # avg_loss, _ = rm_model.train_step(triplets, accel)
         # Silenced log output
         # print(f'rm_model.train_step Total time: {time.time() - st}')
-        print(f"[Step {step}] Loss: {avg_loss:.4f}")
+        # print(f"[Step {step}] Loss: {avg_loss:.4f}")
         log_questions(questions, gold_answers, candidates, rm_scores, correctness_filtered_list)
 
         if step % save_every == 0 and step > 0:
