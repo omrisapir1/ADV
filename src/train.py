@@ -234,7 +234,7 @@ async def training_loop(config: Dict[str, Any]):
             new_corr: List[int] = []
             for t, f, corr in zip(texts_row, flags_row, corr_row):
                 # Drop only if candidate invalid (f==0) but correctness says it's correct (corr==1)
-                if f == 0 and corr == 1:
+                if corr ==-1 or (f == 0 and corr == 1):
                     continue
                 new_texts.append(t)
                 new_corr.append(corr)
@@ -250,7 +250,7 @@ async def training_loop(config: Dict[str, Any]):
             unique_values = set(question_correctness)
             # Silenced log output
             # print(f'question_correctness for question {i}: {question_correctness}, unique values: {unique_values}')
-            if len(unique_values) > 1:
+            if 1 in unique_values and 0 in unique_values:
                 filtered_indices.append(i)
         if not filtered_indices:
             # Silenced log output

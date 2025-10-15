@@ -17,3 +17,48 @@ def roc_auc(r):
     return roc_auc_score(r['questions']['correctness'], r['questions']['rm_scores'])
 
 df['roc_auc'] = df.apply(roc_auc, axis=1)
+
+
+
+from typing import Dict, Any
+
+def select_candidates(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Given a dict with fields:
+        gold_answer: str
+        rm_score: list of 16 floats
+        correctness: list of 16 ints (1 or 0)
+        candidates: list of 16 str
+
+    Returns:
+        {
+            'gold_answer': str,
+            'highest_0': str or None,
+            'lowest_1': str or None
+        }
+    """
+    gold_answer = entry["gold_answer"]
+    rm_score = entry["rm_scores"]
+    correctness = entry["correctness"]
+    candidates = entry["candidates"]
+
+    highest_0 = None
+    lowest_1 = None
+
+    # Find highest rm_score where correctness == 0
+    zero_indices = [i for i, c in enumerate(correctness) if c == 0]
+    if zero_indices:
+        best_zero_idx = max(zero_indices, key=lambda i: rm_score[i])
+        highest_0 = candidates[best_zero_idx]
+
+    # Find lowest rm_score where correctness == 1
+    one_indices = [i for i, c in enumerate(correctness) if c == 1]
+    if one_indices:
+        worst_one_idx = min(one_indices, key=lambda i: rm_score[i])
+        lowest_1 = candidates[worst_one_idx]
+
+    return {
+        "gold_answer": gold_answer,
+        "highest_0": highest_0,
+        "lowest_1": lowest_1,
+    }

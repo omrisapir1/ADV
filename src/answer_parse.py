@@ -40,25 +40,38 @@ def _numeric_equal(a: float, b: float, rel: float = 1e-4, abs_tol: float = 1e-12
 
 def extract_final_answer(llm_output: str) -> Optional[str]:
     """Fast extractor assuming only boxed answers or numeric last line."""
-    m = re.findall(r"\\boxed\s*\{(.*?)\}", llm_output or "", flags=re.DOTALL)
-    if m:
-        return m[-1].strip()
+    pattern = re.compile(r"\\boxed\s*\{(.*?)\}", flags=re.DOTALL)
+    matches = list(pattern.finditer(llm_output))
+    if matches:
+        last_match = matches[-1]
+        start_idx = last_match.start()
+        return last_match.group(0).strip(),  'boxed' in llm_output[start_idx:].lower()
     lines = [ln.strip() for ln in (llm_output or "").splitlines() if ln.strip()]
-    return lines[-1] if lines else None
+    return lines[-1] if lines else None, False
 
 def math_equal(pred: Union[str, float, int, None],
                ref: Union[str, float, int, None],
-               rel_tol: float = 1e-4) -> bool:
+               can_only_be_zero: bool = False,
+               rel_tol: float = 1e-4) -> int:
     if pred is None or ref is None:
-        return False
+        return 0
     p_num = _parse_digits(str(pred))
     r_num = _parse_digits(str(ref))
     if p_num is None or r_num is None:
-        return False
+        if ''.join([c for c in pred if c.isdigit() or c == '.']) == ref:
+            return -1
+        return 0
     # Allow equality up to 1e-4 relative tolerance or exact match
-    return _numeric_equal(p_num, r_num, rel=rel_tol) or \
+    if _numeric_equal(p_num, r_num, rel=rel_tol) or \
            _numeric_equal(p_num, r_num * 100.0, rel=rel_tol) or \
-           _numeric_equal(p_num, r_num / 100.0, rel=rel_tol)
+           _numeric_equal(p_num, r_num / 100.0, rel=rel_tol):
+        if can_only_be_zero:
+            return -1
+        return 1
+    if ''.join([c for c in pred if c.isdigit() or c=='.']) == ref:
+        return -1
+    return 0
+
 
 def compute_final_correctness(candidates: List[List[str]], gold_answers: List[str]) -> List[List[int]]:
     B = len(candidates)
@@ -71,7 +84,7 @@ def compute_final_correctness(candidates: List[List[str]], gold_answers: List[st
     for row, g in zip(candidates, gold_extracted):
         row_flags: List[int] = []
         for cand_raw in row:
-            cand_ans = extract_final_answer(cand_raw)
-            row_flags.append(1 if math_equal(cand_ans, g) else 0)
+            cand_ans, can_only_be_zero = extract_final_answer(cand_raw)
+            row_flags.append(math_equal(cand_ans, g, can_only_be_zero))
         out.append(row_flags)
     return out
