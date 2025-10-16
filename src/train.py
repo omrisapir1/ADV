@@ -192,7 +192,7 @@ async def training_loop(config: Dict[str, Any]):
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
     # Initialize reward model with integrated optimizer/scheduler via accelerator
-    rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps, accel)
+    # rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps, accel)
 
     # Build SGLang engine
     engine = build_sglang_engine(llm_name, sglang_config)
