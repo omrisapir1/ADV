@@ -284,7 +284,7 @@ async def training_loop(config: Dict[str, Any]):
 
 
         triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
-        print(triplets)
+        # print(triplets)
         if not triplets:
             # Silenced log output
             # print(f"[Step {step}] No valid pos/neg triplets after selection, skipping.")
@@ -296,7 +296,7 @@ async def training_loop(config: Dict[str, Any]):
         # print(f'rm_model.train_step Total time: {time.time() - st}')
         print(f"[Step {step}] Loss: {avg_loss:.4f} lr rate: {lr_rate:.6f}")
         log_questions(questions, gold_answers, candidates, rm_scores, correctness_filtered_list)
-        raise
+        # raise
         if step % save_every == 0 and step > 0:
             checkpoint_path = os.path.join(out_dir, f"checkpoint-{step}")
             accel.save_state(checkpoint_path)

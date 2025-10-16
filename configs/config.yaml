@@ -8,7 +8,7 @@ reward_model:
   pad_to_multiple_of_8: true
   optim:
     name: adamw
-    lr: 1e-3
+    lr: 1e-4
     weight_decay: 0.001
     betas:
       - 0.9
