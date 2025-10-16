@@ -37,8 +37,7 @@ class AceMathRewardModel:
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
             low_cpu_mem_usage=True,
-            attn_implementation="sdpa"
-            # attn_implementation="flash_attention_2",
+            attn_implementation="sdpa",
         ).to(self.device)
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
 
@@ -56,6 +55,7 @@ class AceMathRewardModel:
         self.grad_clip = self.train_config.get("grad_clip")
         self.pair_batch_size = self.train_config.get("batch_size")
         self.optimizer = create_optimizer(self, self.rm_config)
+        # create_scheduler should now return a ConstantLR (or None if you chose that design)
         self.scheduler = create_scheduler(self.optimizer, self.rm_config, num_steps)
         self.model, self.optimizer, self.scheduler = accelerator.prepare(self.model, self.optimizer, self.scheduler)
 
@@ -66,7 +66,6 @@ class AceMathRewardModel:
             {"role": "assistant", "content": solution},
         ]
 
-    # -------------------- Packing utility (token-count based) --------------------
     @staticmethod
     def pack_by_tokens(lengths: List[int], max_tokens_per_batch: int, max_seqs_per_batch: int) -> List[List[int]]:
         order = sorted(range(len(lengths)), key=lambda i: lengths[i], reverse=True)
@@ -85,7 +84,6 @@ class AceMathRewardModel:
             batches.append(cur)
         return batches
 
-    # -------------------- Core forward (expects already tokenized batch on device) --------------------
     def _forward_logits(self, enc: dict, *, grad_enabled: bool) -> torch.Tensor:
         ctx_amp = torch.cuda.amp.autocast(dtype=torch.bfloat16) if self.device.startswith("cuda") else torch.nullcontext()
         ctx_grad = torch.enable_grad() if grad_enabled else torch.inference_mode()
@@ -96,7 +94,7 @@ class AceMathRewardModel:
     def _apply_padding_and_move(self, batch_texts: List[str], pad_to_mult8: bool, grad_enabled: bool) -> torch.Tensor:
         raise NotImplementedError("Deprecated path; not used after refactor")
 
-    # -------------------- Reference scoring (batch tokenization + optional double buffering) --------------------
+    # -------------------- Reference scoring --------------------
     def score_reference(self, questions: List[str], candidates_by_q: List[List[str]], rm_config: Optional[dict] = None, forced_small_batch_size=False) -> torch.Tensor:
         self.model.eval()
         rm_config = rm_config or self.rm_config
@@ -104,8 +102,8 @@ class AceMathRewardModel:
         max_tokens = int(rm_config.get("max_tokens_per_batch_infer", 64000))
         max_seqs = int(rm_config.get("max_seqs_per_infer_batch", 80))
         if forced_small_batch_size:
-            max_tokens = int(max_tokens*0.25)
-            max_seqs = int(max_seqs*0.25)
+            max_tokens = int(max_tokens * 0.25)
+            max_seqs = int(max_seqs * 0.25)
 
         texts: List[str] = []
         meta: List[Tuple[int, int]] = []  # (qi, kj)
@@ -120,7 +118,6 @@ class AceMathRewardModel:
         if not texts:
             return torch.empty(len(questions), max_k, dtype=torch.float32)
 
-        # Single global tokenization to obtain lengths (no padding) for packing
         prelim = self.tokenizer(texts, padding=False, truncation=True)
         lengths = [len(ids) for ids in prelim["input_ids"]]
         scores = torch.empty(len(questions), max_k, dtype=torch.float32).fill_(float("nan"))
@@ -149,7 +146,6 @@ class AceMathRewardModel:
                 enc_local = {k: v.to(self.device, non_blocking=True) for k, v in enc_local.items()}
             return enc_local
 
-        # Prefetch first batch synchronously (or on stream then sync)
         if use_double_buffer:
             with torch.cuda.stream(prefetch_stream):
                 next_enc = prepare_batch(batches[0])
@@ -159,11 +155,9 @@ class AceMathRewardModel:
 
         for bi, idxs in enumerate(batches):
             current_enc = next_enc
-            # Launch prefetch for next batch if exists
             if use_double_buffer and bi + 1 < len(batches):
                 with torch.cuda.stream(prefetch_stream):
                     next_enc = prepare_batch(batches[bi + 1])
-            # Ensure current batch ready
             if use_double_buffer:
                 torch.cuda.current_stream().wait_stream(prefetch_stream)
             logits = self._forward_logits(current_enc, grad_enabled=False)
@@ -172,8 +166,6 @@ class AceMathRewardModel:
                 qi, kj = meta[global_i]
                 scores[qi, kj] = logits_cpu[local_i]
             del logits, logits_cpu, current_enc
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
         return scores
 
     # -------------------- Pair scoring (pos/neg) --------------------
@@ -184,12 +176,11 @@ class AceMathRewardModel:
         rm_config = rm_config or self.rm_config
         pad_to_mult8 = bool(rm_config.get("pad_to_multiple_of_8", False))
 
-        # Build interleaved texts (pos, neg)
         texts: List[str] = []
         for q, p, n in zip(questions, solutions_pos, solutions_neg):
             texts.append(self.tokenizer.apply_chat_template(self._chat(q, p), tokenize=False, add_generation_prompt=False))
             texts.append(self.tokenizer.apply_chat_template(self._chat(q, n), tokenize=False, add_generation_prompt=False))
-        # Initial global tokenization (no padding) to get lengths for sorting
+
         prelim = self.tokenizer(texts, padding=False, truncation=True)
         lengths = [len(ids) for ids in prelim["input_ids"]]
         order = sorted(range(len(texts)), key=lambda i: lengths[i], reverse=True)
@@ -207,11 +198,13 @@ class AceMathRewardModel:
                 if v.device.type == "cpu":
                     enc[k] = v.pin_memory()
             enc = {k: v.to(self.device, non_blocking=True) for k, v in enc.items()}
+
         logits_sorted = self._forward_logits(enc, grad_enabled=True)
-        # Undo sort correctly: place each sorted logit back at original index
+
+        # Differentiable undo of sorting
         order_tensor = torch.tensor(order, device=logits_sorted.device, dtype=torch.long)
         inv = torch.argsort(order_tensor)
-        original_logits = logits_sorted[inv]  # differentiable reordering
+        original_logits = logits_sorted[inv]
 
         r_pos = original_logits[0::2]
         r_neg = original_logits[1::2]
@@ -220,9 +213,10 @@ class AceMathRewardModel:
     def train_step(self, triplets: List[Tuple[str, str, str]], accelerator) -> Tuple[float, float]:
         assert self.optimizer is not None and self.scheduler is not None, "Optimizer/scheduler not initialized."
         self.model.train()
-        batch_size  = self.pair_batch_size
+        batch_size = self.pair_batch_size
         total_loss = 0.0
         num_batches = 0
+
         for start in range(0, len(triplets), batch_size):
             end = min(start + batch_size, len(triplets))
             batch = triplets[start:end]
@@ -237,18 +231,25 @@ class AceMathRewardModel:
                 total_loss += loss.detach().item()
                 num_batches += 1
                 del r_pos, r_neg, loss, batch_q, batch_pos, batch_neg, batch
-                torch.cuda.empty_cache()
             except Exception as e:
                 print(f"Exception during RM training step: {e} will skip...")
-                torch.cuda.empty_cache()
                 continue
+
         avg_loss = total_loss / num_batches if num_batches else 0.0
-        if accelerator.sync_gradients:
-            accelerator.clip_grad_norm_(self.model.parameters(), self.grad_clip or 1.0)
-        accelerator.optimizer_step(self.optimizer)
-        self.scheduler.step()
-        self.optimizer.zero_grad(set_to_none=True)
-        current_lr = self.scheduler.get_last_lr()[0]
+
+        if num_batches:
+            if accelerator.sync_gradients:
+                accelerator.clip_grad_norm_(self.model.parameters(), self.grad_clip or 1.0)
+            accelerator.optimizer_step(self.optimizer)
+            # ConstantLR: this is a no-op on LR value but safe to call
+            self.scheduler.step()
+            self.optimizer.zero_grad(set_to_none=True)
+        else:
+            # nothing accumulated; just ensure grads are cleared
+            self.optimizer.zero_grad(set_to_none=True)
+
+        # For constant LR, read directly from optimizer
+        current_lr = float(self.optimizer.param_groups[0]["lr"])
         return avg_loss, current_lr
 
 
