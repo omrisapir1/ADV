@@ -240,7 +240,7 @@ class AceMathRewardModel:
         if num_batches:
             if accelerator.sync_gradients:
                 accelerator.clip_grad_norm_(self.model.parameters(), self.grad_clip or 1.0)
-            accelerator.optimizer_step(self.optimizer)
+            self.optimizer.step()
             # ConstantLR: this is a no-op on LR value but safe to call
             self.scheduler.step()
             self.optimizer.zero_grad(set_to_none=True)
