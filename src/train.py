@@ -279,6 +279,7 @@ async def training_loop(config: Dict[str, Any]):
             print(f"[Step {step}] Exception during RM scoring: {e} will retry batch with 0.25 batch size.")
             torch.cuda.empty_cache()
             rm_scores = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
+        torch.cuda.empty_cache()
         # Silenced log output
         # print(f'rm_scores Total time: {time.time() - st}')
 
