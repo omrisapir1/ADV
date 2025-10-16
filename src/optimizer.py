@@ -1,7 +1,6 @@
 import torch
 from torch.optim import AdamW
 from typing import Dict, Any
-from transformers import get_cosine_schedule_with_warmup
 
 
 def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.optim.Optimizer:
@@ -41,13 +40,6 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.op
 
 
 def create_scheduler(optimizer: torch.optim.Optimizer, config: Dict[str, Any], total_steps: int):
-    """Create cosine learning rate scheduler with warmup."""
-    scheduler_config = config.get("scheduler", {})
-    warmup_ratio = float(scheduler_config.get("warmup_ratio", 0.03))
-    warmup_steps = int(total_steps * warmup_ratio)
-
-    return get_cosine_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=max(1, warmup_steps),
-        num_training_steps=max(1, total_steps),
-    )
+    """Return a constant (no-decay, no-warmup) scheduler."""
+    # ConstantLR with factor=1.0 keeps LR unchanged.
+    return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0, total_iters=total_steps)

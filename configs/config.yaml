@@ -3,21 +3,19 @@ model:
   rm_name: nvidia/AceMath-7B-RM
 
 reward_model:
-  max_tokens_per_batch_infer: 100000
-  max_seqs_per_infer_batch: 250
+  max_tokens_per_batch_infer: 80000
+  max_seqs_per_infer_batch: 200
   pad_to_multiple_of_8: true
   optim:
     name: adamw
     lr: 1e-4
-    weight_decay: 0.01
+    weight_decay: 0.001
     betas:
       - 0.9
       - 0.999
     eps: 1.0e-8
-    fused: true
+    fused: false
     no_decay_modules: [ "LayerNorm", "bias" ]
-  scheduler:
-      warmup_ratio: 0.03
   train:
     batch_size: 1
     grad_clip: 1.0
