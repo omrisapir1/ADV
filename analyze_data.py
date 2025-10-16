@@ -14,7 +14,11 @@ df = pd.DataFrame(all_jsons)
 df = df.explode('questions')
 
 def roc_auc(r):
-    return roc_auc_score(r['questions']['correctness'], r['questions']['rm_scores'])
+    y_true, y_pred = [], []
+    for c,s in zip(r['questions']['correctness'], r['questions']['rm_scores']):
+        y_true.append(c)
+        y_pred.append(s)
+    return roc_auc_score(y_true, y_pred)
 
 df['roc_auc'] = df.apply(roc_auc, axis=1)
 

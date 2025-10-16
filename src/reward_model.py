@@ -213,10 +213,10 @@ class AceMathRewardModel:
         r_neg = original_logits[1::2]
         return r_pos, r_neg
 
-    def train_step(self, triplets: List[Tuple[str, str, str]], accelerator) -> Tuple[float, float]:
+    def train_step(self, triplets: List[Tuple[str, str, str]], accelerator, forced_batch_size=None) -> Tuple[float, float]:
         assert self.optimizer is not None and self.scheduler is not None, "Optimizer/scheduler not initialized."
         self.model.train()
-        batch_size = self.pair_batch_size or self.train_config.get("batch_size")
+        batch_size = forced_batch_size or self.pair_batch_size
         total_loss = 0.0
         num_batches = 0
         for start in range(0, len(triplets), batch_size):
@@ -232,8 +232,7 @@ class AceMathRewardModel:
             total_loss += loss.detach().item()
             num_batches += 1
             del r_pos, r_neg, loss, batch_q, batch_pos, batch_neg, batch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            torch.cuda.empty_cache()
         avg_loss = total_loss / num_batches if num_batches else 0.0
         if num_batches:
             if accelerator.sync_gradients:
