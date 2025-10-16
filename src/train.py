@@ -273,29 +273,30 @@ async def training_loop(config: Dict[str, Any]):
         # print(f"[Step {step}] correctness tensor shape: {correctness_tensor.shape}")
 
         st = time.time()
-        try:
-            rm_scores = rm_model.score_reference(questions, candidates, rm_config)
-        except Exception as e:
-            print(f"[Step {step}] Exception during RM scoring: {e} will retry batch with 0.25 batch size.")
-            torch.cuda.empty_cache()
-            rm_scores = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
-        torch.cuda.empty_cache()
+        # try:
+        #     rm_scores = rm_model.score_reference(questions, candidates, rm_config)
+        # except Exception as e:
+        #     print(f"[Step {step}] Exception during RM scoring: {e} will retry batch with 0.25 batch size.")
+        #     torch.cuda.empty_cache()
+        #     rm_scores = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
+        # torch.cuda.empty_cache()
         # Silenced log output
         # print(f'rm_scores Total time: {time.time() - st}')
 
 
-        triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
+        # triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
         # print(triplets)
-        if not triplets:
+        # if not triplets:
             # Silenced log output
             # print(f"[Step {step}] No valid pos/neg triplets after selection, skipping.")
-            continue
+            # continue
         st = time.time()
-        avg_loss, lr_rate = rm_model.train_step(triplets, accel)
+        # avg_loss, lr_rate = rm_model.train_step(triplets, accel)
 
         # Silenced log output
         # print(f'rm_model.train_step Total time: {time.time() - st}')
-        print(f"[Step {step}] Loss: {avg_loss:.4f} lr rate: {lr_rate:.6f}")
+        # print(f"[Step {step}] Loss: {avg_loss:.4f} lr rate: {lr_rate:.6f}")
+        rm_scores = []
         log_questions(questions, gold_answers, candidates, rm_scores, correctness_filtered_list)
         # raise
         if step % save_every == 0 and step > 0:
