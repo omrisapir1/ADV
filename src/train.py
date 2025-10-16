@@ -273,7 +273,12 @@ async def training_loop(config: Dict[str, Any]):
         # print(f"[Step {step}] correctness tensor shape: {correctness_tensor.shape}")
 
         st = time.time()
-        rm_scores = rm_model.score_reference(questions, candidates, rm_config)
+        try:
+            rm_scores = rm_model.score_reference(questions, candidates, rm_config)
+        except Exception as e:
+            print(f"[Step {step}] Exception during RM scoring: {e} will retry batch with 0.25 batch size.")
+            torch.cuda.empty_cache()
+            rm_scores = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
         # Silenced log output
         # print(f'rm_scores Total time: {time.time() - st}')
 
@@ -288,10 +293,11 @@ async def training_loop(config: Dict[str, Any]):
             avg_loss, lr_rate = rm_model.train_step(triplets, accel)
         except Exception as e:
             print(f"[Step {step}] Exception during training step: {e}")
+            torch.cuda.empty_cache()
             continue
         # Silenced log output
         # print(f'rm_model.train_step Total time: {time.time() - st}')
-        print(f"[Step {step}] Loss: {avg_loss:.4f} lr rate: {lr_rate:.4f}")
+        print(f"[Step {step}] Loss: {avg_loss:.4f} lr rate: {lr_rate:.6f}")
         log_questions(questions, gold_answers, candidates, rm_scores, correctness_filtered_list)
 
         if step % save_every == 0 and step > 0:

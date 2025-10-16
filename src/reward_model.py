@@ -97,12 +97,15 @@ class AceMathRewardModel:
         raise NotImplementedError("Deprecated path; not used after refactor")
 
     # -------------------- Reference scoring (batch tokenization + optional double buffering) --------------------
-    def score_reference(self, questions: List[str], candidates_by_q: List[List[str]], rm_config: Optional[dict] = None) -> torch.Tensor:
+    def score_reference(self, questions: List[str], candidates_by_q: List[List[str]], rm_config: Optional[dict] = None, forced_small_batch_size=False) -> torch.Tensor:
         self.model.eval()
         rm_config = rm_config or self.rm_config
         pad_to_mult8 = bool(rm_config.get("pad_to_multiple_of_8", False))
         max_tokens = int(rm_config.get("max_tokens_per_batch_infer", 64000))
         max_seqs = int(rm_config.get("max_seqs_per_infer_batch", 80))
+        if forced_small_batch_size:
+            max_tokens = int(max_tokens*0.25)
+            max_seqs = int(max_seqs*0.25)
 
         texts: List[str] = []
         meta: List[Tuple[int, int]] = []  # (qi, kj)
@@ -213,10 +216,10 @@ class AceMathRewardModel:
         r_neg = original_logits[1::2]
         return r_pos, r_neg
 
-    def train_step(self, triplets: List[Tuple[str, str, str]], accelerator, forced_batch_size=None) -> Tuple[float, float]:
+    def train_step(self, triplets: List[Tuple[str, str, str]], accelerator) -> Tuple[float, float]:
         assert self.optimizer is not None and self.scheduler is not None, "Optimizer/scheduler not initialized."
         self.model.train()
-        batch_size = forced_batch_size or self.pair_batch_size
+        batch_size  = self.pair_batch_size
         total_loss = 0.0
         num_batches = 0
         for start in range(0, len(triplets), batch_size):
@@ -225,14 +228,19 @@ class AceMathRewardModel:
             batch_q = [t[0] for t in batch]
             batch_pos = [t[1] for t in batch]
             batch_neg = [t[2] for t in batch]
-            r_pos, r_neg = self.score_pairs(batch_q, batch_pos, batch_neg, self.rm_config)
-            assert r_pos.shape == r_neg.shape
-            loss = pairwise_rm_loss(r_pos, r_neg)
-            accelerator.backward(loss)
-            total_loss += loss.detach().item()
-            num_batches += 1
-            del r_pos, r_neg, loss, batch_q, batch_pos, batch_neg, batch
-            torch.cuda.empty_cache()
+            try:
+                r_pos, r_neg = self.score_pairs(batch_q, batch_pos, batch_neg, self.rm_config)
+                assert r_pos.shape == r_neg.shape
+                loss = pairwise_rm_loss(r_pos, r_neg)
+                accelerator.backward(loss)
+                total_loss += loss.detach().item()
+                num_batches += 1
+                del r_pos, r_neg, loss, batch_q, batch_pos, batch_neg, batch
+                torch.cuda.empty_cache()
+            except Exception as e:
+                print(f"Exception during RM training step: {e} will skip...")
+                torch.cuda.empty_cache()
+                continue
         avg_loss = total_loss / num_batches if num_batches else 0.0
         if num_batches:
             if accelerator.sync_gradients:
