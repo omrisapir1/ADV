@@ -1,8 +1,7 @@
 import torch
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import LinearLR
-from typing import Dict, Any, Iterator
-from transformers import get_linear_schedule_with_warmup
+from typing import Dict, Any
+from transformers import get_cosine_schedule_with_warmup
 
 
 def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.optim.Optimizer:
@@ -13,25 +12,17 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.op
     no_decay_modules = optim_config.get("no_decay_modules", ["LayerNorm", "bias"])
 
     # Separate parameters into decay and no_decay groups
-    decay_params = []
-    no_decay_params = []
-
+    decay_params, no_decay_params = [], []
     for name, param in model.model.named_parameters():
         if not param.requires_grad:
             continue
-
-        # Check if this parameter should have no weight decay
         should_not_decay = any(module_name in name for module_name in no_decay_modules)
-
-        if should_not_decay:
-            no_decay_params.append(param)
-        else:
-            decay_params.append(param)
+        (no_decay_params if should_not_decay else decay_params).append(param)
 
     # Create parameter groups
     param_groups = [
         {"params": decay_params, "weight_decay": optim_config.get("weight_decay", 0.01)},
-        {"params": no_decay_params, "weight_decay": 0.0}
+        {"params": no_decay_params, "weight_decay": 0.0},
     ]
 
     # Create optimizer
@@ -39,9 +30,9 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.op
         optimizer = AdamW(
             param_groups,
             lr=float(optim_config.get("lr")),
-            betas=optim_config.get("betas"),
-            eps=float(optim_config.get("eps")),
-            fused=optim_config.get("fused")
+            betas=optim_config.get("betas", (0.9, 0.999)),
+            eps=float(optim_config.get("eps", 1e-8)),
+            fused=optim_config.get("fused", False),
         )
     else:
         raise ValueError(f"Unsupported optimizer: {optim_config.get('name')}")
@@ -50,11 +41,13 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.op
 
 
 def create_scheduler(optimizer: torch.optim.Optimizer, config: Dict[str, Any], total_steps: int):
-    """Create learning rate scheduler based on config."""
-
+    """Create cosine learning rate scheduler with warmup."""
     scheduler_config = config.get("scheduler", {})
-    warmup_ratio = float(scheduler_config.get("warmup_ratio"))
+    warmup_ratio = float(scheduler_config.get("warmup_ratio", 0.03))
     warmup_steps = int(total_steps * warmup_ratio)
-    return get_linear_schedule_with_warmup(optimizer,
+
+    return get_cosine_schedule_with_warmup(
+        optimizer,
         num_warmup_steps=max(1, warmup_steps),
-        num_training_steps=max(1, total_steps))
+        num_training_steps=max(1, total_steps),
+    )

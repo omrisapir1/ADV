@@ -289,12 +289,8 @@ async def training_loop(config: Dict[str, Any]):
             # print(f"[Step {step}] No valid pos/neg triplets after selection, skipping.")
             continue
         st = time.time()
-        try:
-            avg_loss, lr_rate = rm_model.train_step(triplets, accel)
-        except Exception as e:
-            print(f"[Step {step}] Exception during training step: {e}")
-            torch.cuda.empty_cache()
-            continue
+        avg_loss, lr_rate = rm_model.train_step(triplets, accel)
+
         # Silenced log output
         # print(f'rm_model.train_step Total time: {time.time() - st}')
         print(f"[Step {step}] Loss: {avg_loss:.4f} lr rate: {lr_rate:.6f}")

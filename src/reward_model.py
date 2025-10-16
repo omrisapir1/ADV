@@ -209,9 +209,10 @@ class AceMathRewardModel:
             enc = {k: v.to(self.device, non_blocking=True) for k, v in enc.items()}
         logits_sorted = self._forward_logits(enc, grad_enabled=True)
         # Undo sort correctly: place each sorted logit back at original index
-        original_logits = torch.empty_like(logits_sorted)
-        original_order_tensor = torch.tensor(order)
-        original_logits[original_order_tensor] = logits_sorted
+        order_tensor = torch.tensor(order, device=logits_sorted.device, dtype=torch.long)
+        inv = torch.argsort(order_tensor)
+        original_logits = logits_sorted[inv]  # differentiable reordering
+
         r_pos = original_logits[0::2]
         r_neg = original_logits[1::2]
         return r_pos, r_neg
@@ -242,13 +243,11 @@ class AceMathRewardModel:
                 torch.cuda.empty_cache()
                 continue
         avg_loss = total_loss / num_batches if num_batches else 0.0
-        if num_batches:
-            if accelerator.sync_gradients:
-                accelerator.clip_grad_norm_(self.model.parameters(), self.grad_clip or 1.0)
-            self.scheduler.step()
-            self.optimizer.zero_grad()
-        else:
-            self.optimizer.zero_grad()
+        if accelerator.sync_gradients:
+            accelerator.clip_grad_norm_(self.model.parameters(), self.grad_clip or 1.0)
+        accelerator.optimizer_step(self.optimizer)
+        self.scheduler.step()
+        self.optimizer.zero_grad(set_to_none=True)
         current_lr = self.scheduler.get_last_lr()[0]
         return avg_loss, current_lr
 
