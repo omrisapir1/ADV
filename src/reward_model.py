@@ -55,6 +55,7 @@ class AceMathRewardModel:
         self.pair_batch_size = int(self.train_config.get("batch_size", 1) or 1)
         self.optimizer = create_optimizer(self, self.rm_config)
         self.scheduler = create_scheduler(self.optimizer, self.rm_config, num_steps)
+        self.model.gradient_checkpointing_enable()
 
     def save_state(self, path: str):
         os.makedirs(path, exist_ok=True)

@@ -288,7 +288,9 @@ async def training_loop(config: Dict[str, Any]):
             rm_scores = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
         torch.cuda.empty_cache()
         # Silenced log output
-        # print(f'rm_scores Total time: {time.time() - st}')
+        print(f'rm_scores Total time: {time.time() - st}')
+        print(f'will sleep for 20 seconds, check memory usage')
+        time.sleep(20)
 
 
         triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
