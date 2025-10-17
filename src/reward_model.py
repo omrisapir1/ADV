@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from typing import List, Tuple, Optional
+import os
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
-from accelerate import Accelerator
 from .optimizer import create_optimizer, create_scheduler
 from .losses import pairwise_rm_loss
 
@@ -18,7 +18,6 @@ class AceMathRewardModel:
         gpu_id: int,
         rm_config: Optional[dict] = None,
         num_steps: Optional[int] = None,
-        accelerator: Optional[Accelerator] = None,
     ):
         device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
         self.model_name = model_name
@@ -47,17 +46,27 @@ class AceMathRewardModel:
         self.grad_clip = None
         self.pair_batch_size = None
 
-        if num_steps is not None and accelerator is not None:
-            self._setup_training(num_steps, accelerator)
+        if num_steps is not None:
+            self._setup_training(num_steps)
 
-    def _setup_training(self, num_steps: int, accelerator: Accelerator):
-        self.grad_accum = self.train_config.get("grad_accum")
+    def _setup_training(self, num_steps: int):
+        self.grad_accum = int(self.train_config.get("grad_accum", 1) or 1)
         self.grad_clip = self.train_config.get("grad_clip")
-        self.pair_batch_size = self.train_config.get("batch_size")
+        self.pair_batch_size = int(self.train_config.get("batch_size", 1) or 1)
         self.optimizer = create_optimizer(self, self.rm_config)
-        # create_scheduler should now return a ConstantLR (or None if you chose that design)
         self.scheduler = create_scheduler(self.optimizer, self.rm_config, num_steps)
-        self.model, self.optimizer, self.scheduler = accelerator.prepare(self.model, self.optimizer, self.scheduler)
+
+    def save_state(self, path: str):
+        os.makedirs(path, exist_ok=True)
+        torch.save(
+            {
+                "model_state": self.model.state_dict(),
+                "optimizer_state": self.optimizer.state_dict() if self.optimizer else None,
+                "scheduler_state": self.scheduler.state_dict() if self.scheduler else None,
+                "config": self.rm_config,
+            },
+            os.path.join(path, "reward_model.pt"),
+        )
 
     def _chat(self, question: str, solution: str):
         return [
@@ -210,12 +219,15 @@ class AceMathRewardModel:
         r_neg = original_logits[1::2]
         return r_pos, r_neg
 
-    def train_step(self, triplets: List[Tuple[str, str, str]], accelerator) -> Tuple[float, float]:
+    def train_step(self, triplets: List[Tuple[str, str, str]]) -> Tuple[float, float]:
         assert self.optimizer is not None and self.scheduler is not None, "Optimizer/scheduler not initialized."
         self.model.train()
         batch_size = self.pair_batch_size
         total_loss = 0.0
         num_batches = 0
+        accum_steps = self.grad_accum or 1
+        # Ensure gradients cleared before accumulation
+        self.optimizer.zero_grad(set_to_none=True)
 
         for start in range(0, len(triplets), batch_size):
             end = min(start + batch_size, len(triplets))
@@ -226,32 +238,27 @@ class AceMathRewardModel:
             try:
                 r_pos, r_neg = self.score_pairs(batch_q, batch_pos, batch_neg, self.rm_config)
                 assert r_pos.shape == r_neg.shape
-                loss = pairwise_rm_loss(r_pos, r_neg)
-                accelerator.backward(loss)
-                total_loss += loss.detach().item()
+                loss_full = pairwise_rm_loss(r_pos, r_neg)
+                total_loss += loss_full.detach().item()
                 num_batches += 1
-                del r_pos, r_neg, loss, batch_q, batch_pos, batch_neg, batch
+                # Scale loss for gradient accumulation
+                (loss_full / accum_steps).backward()
+                # Step after accum_steps or at final batch
+                if num_batches % accum_steps == 0 or end == len(triplets):
+                    if self.grad_clip is not None:
+                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                    self.optimizer.step()
+                    self.scheduler.step()
+                    self.optimizer.zero_grad(set_to_none=True)
+                del r_pos, r_neg, loss_full, batch_q, batch_pos, batch_neg, batch
             except Exception as e:
-                print(f"Exception during RM training step: {e} will skip...")
+                print(f"Exception during RM training step: {e} will skip batch...")
                 continue
 
         avg_loss = total_loss / num_batches if num_batches else 0.0
-
-        if num_batches:
-            if accelerator.sync_gradients:
-                accelerator.clip_grad_norm_(self.model.parameters(), self.grad_clip or 1.0)
-            self.optimizer.step()
-            # ConstantLR: this is a no-op on LR value but safe to call
-            self.scheduler.step()
-            self.optimizer.zero_grad(set_to_none=True)
-        else:
-            # nothing accumulated; just ensure grads are cleared
-            self.optimizer.zero_grad(set_to_none=True)
-
-        # For constant LR, read directly from optimizer
-        current_lr = float(self.optimizer.param_groups[0]["lr"])
+        current_lr = float(self.optimizer.param_groups[0]["lr"]) if self.optimizer else 0.0
         return avg_loss, current_lr
 
 
-def load_reward_model(model_name: str, gpu_id: int, rm_config: Optional[dict] = None, num_steps: Optional[int] = None, accelerator: Optional[object] = None) -> AceMathRewardModel:
-    return AceMathRewardModel(model_name, gpu_id, rm_config, num_steps, accelerator)
+def load_reward_model(model_name: str, gpu_id: int, rm_config: Optional[dict] = None, num_steps: Optional[int] = None) -> AceMathRewardModel:
+    return AceMathRewardModel(model_name, gpu_id, rm_config, num_steps)

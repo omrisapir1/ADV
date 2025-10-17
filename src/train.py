@@ -8,7 +8,6 @@ import os
 import shutil
 from datetime import datetime
 from datasets import load_dataset
-from accelerate import Accelerator
 from transformers import AutoTokenizer
 from .prompting import build_prompts
 from .generation import build_sglang_engine
@@ -176,7 +175,6 @@ async def training_loop(config: Dict[str, Any]):
     train_config = rm_config.get("train", {})
     mixed_precision = train_config.get("mixed_precision", "bf16")
     grad_accum = train_config.get("grad_accum", 1)
-    accel = Accelerator(mixed_precision=mixed_precision, gradient_accumulation_steps=grad_accum)
 
     llm_name = config["model"]["llm_name"]
     rm_name = config["model"]["rm_name"]
@@ -192,79 +190,88 @@ async def training_loop(config: Dict[str, Any]):
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
     # Initialize reward model with integrated optimizer/scheduler via accelerator
-    # rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps, accel)
+    rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
 
     # Build SGLang engine
-    engine = build_sglang_engine(llm_name, sglang_config)
-    dataset_obj, q_field, a_field = load_dataset_handle(config)
+    # engine = build_sglang_engine(llm_name, sglang_config)
+    # dataset_obj, q_field, a_field = load_dataset_handle(config)
     os.makedirs(out_dir, exist_ok=True)
 
     # Ensure log directory is clean at the start of training
     ensure_empty_log_dir(LOG_DIR)
-
+    import pandas as pd
+    df = pd.read_json("/workspace/ADV/all_j.json")
     for step in range(num_steps):
-        records = get_batch_records(dataset_obj, batch_size, step)
-        questions = [r[q_field] for r in records]
-        gold_answers = [r[a_field] for r in records]
-        prompts = build_prompts(questions, tokenizer)
-        st = time.time()
-        raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **gen_cfg)
+        questions_full = df.iloc[step]['questions']
+    #     records = get_batch_records(dataset_obj, batch_size, step)
+    #     questions = [r[q_field] for r in records]
+    #     gold_answers = [r[a_field] for r in records]
+    #     prompts = build_prompts(questions, tokenizer)
+    #     st = time.time()
+    #     raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **gen_cfg)
         # print(f'Candidate generation Total time: {time.time() - st}')
         # raw_candidates: List[List[(text, valid_flag)]] where valid_flag=1 if phase-2 executed, else 0
         # Extract candidate texts and validity flags
-        candidate_texts = [[c[0] for c in row] for row in raw_candidates]
-        candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
+        # candidate_texts = [[c[0] for c in row] for row in raw_candidates]
+        # candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
         # Silenced log output
         # print(f'candidates Total time: {time.time() - st}')
         # print(f"[Step {step}] Generated candidates per question: {[len(c) for c in candidate_texts]}")
 
         # Compute correctness on the raw candidate texts
         st = time.time()
-        correctness = compute_final_correctness(candidate_texts, gold_answers)  # list of lists (0/1)
+        # correctness = compute_final_correctness(candidate_texts, gold_answers)  # list of lists (0/1)
         # Silenced log output
         # print(f'correctness Total time: {time.time() - st}')
         # print(f'correctness: {correctness}')
 
         # Filter out candidates that are invalid (valid_flag==0) yet marked correct (correctness==1).
-        filtered_candidate_texts: List[List[str]] = []
-        filtered_correctness: List[List[int]] = []
-        for qi, (texts_row, flags_row, corr_row) in enumerate(zip(candidate_texts, candidate_valid_flags, correctness)):
-            new_texts: List[str] = []
-            new_corr: List[int] = []
-            for t, f, corr in zip(texts_row, flags_row, corr_row):
-                # Drop only if candidate invalid (f==0) but correctness says it's correct (corr==1)
-                if corr ==-1 or (f == 0 and corr == 1):
-                    continue
-                new_texts.append(t)
-                new_corr.append(corr)
-            filtered_candidate_texts.append(new_texts)
-            filtered_correctness.append(new_corr)
-        # Replace working variables with filtered versions
-        candidates = filtered_candidate_texts
-        correctness = filtered_correctness
-
-        # Identify questions with mixed correctness (both 0 and 1 present after filtering)
-        filtered_indices = []
-        for i, question_correctness in enumerate(correctness):
-            unique_values = set(question_correctness)
-            # Silenced log output
-            # print(f'question_correctness for question {i}: {question_correctness}, unique values: {unique_values}')
-            # print(f'unique values: {unique_values}')
-            if 1 in unique_values and 0 in unique_values:
-                filtered_indices.append(i)
-        if not filtered_indices:
-            # Silenced log output
-            # print(f"[Step {step}] No mixed correctness examples found, skipping this batch")
-            continue
-        # Silenced log output
-        # print(f"[Step {step}] Filtered from {len(questions)} to {len(filtered_indices)} examples with mixed correctness")
-
-        questions = [questions[i] for i in filtered_indices]
-        gold_answers = [gold_answers[i] for i in filtered_indices]
-        candidates = [candidates[i] for i in filtered_indices]
-        correctness_filtered_list = [correctness[i] for i in filtered_indices]
+        # filtered_candidate_texts: List[List[str]] = []
+        # filtered_correctness: List[List[int]] = []
+        # for qi, (texts_row, flags_row, corr_row) in enumerate(zip(candidate_texts, candidate_valid_flags, correctness)):
+        #     new_texts: List[str] = []
+        #     new_corr: List[int] = []
+        #     for t, f, corr in zip(texts_row, flags_row, corr_row):
+        #         # Drop only if candidate invalid (f==0) but correctness says it's correct (corr==1)
+        #         if corr ==-1 or (f == 0 and corr == 1):
+        #             continue
+        #         new_texts.append(t)
+        #         new_corr.append(corr)
+        #     filtered_candidate_texts.append(new_texts)
+        #     filtered_correctness.append(new_corr)
+        # # Replace working variables with filtered versions
+        # candidates = filtered_candidate_texts
+        # correctness = filtered_correctness
+        #
+        # # Identify questions with mixed correctness (both 0 and 1 present after filtering)
+        # filtered_indices = []
+        # for i, question_correctness in enumerate(correctness):
+        #     unique_values = set(question_correctness)
+        #     # Silenced log output
+        #     # print(f'question_correctness for question {i}: {question_correctness}, unique values: {unique_values}')
+        #     # print(f'unique values: {unique_values}')
+        #     if 1 in unique_values and 0 in unique_values:
+        #         filtered_indices.append(i)
+        # if not filtered_indices:
+        #     # Silenced log output
+        #     # print(f"[Step {step}] No mixed correctness examples found, skipping this batch")
+        #     continue
+        # # Silenced log output
+        # # print(f"[Step {step}] Filtered from {len(questions)} to {len(filtered_indices)} examples with mixed correctness")
+        #
+        # questions = [questions[i] for i in filtered_indices]
+        # gold_answers = [gold_answers[i] for i in filtered_indices]
+        # candidates = [candidates[i] for i in filtered_indices]
+        # correctness_filtered_list = [correctness[i] for i in filtered_indices]
 
         # Convert correctness to padded tensor after filtering
+
+        candidates = questions_full.apply(lambda x: [i['candidates'] for i in x])
+        correctness_filtered_list = questions_full.apply(lambda x: [i['correctness'] for i in x])
+        questions = questions_full.apply(lambda x: [i['question'] for i in x])
+        gold_answers = questions_full.apply(lambda x: [i['gold_answer'] for i in x])
+
+
         max_k = max((len(row) for row in candidates), default=0)
         correctness_tensor = torch.zeros(len(candidates), max_k, dtype=torch.int32)
         for qi, row in enumerate(correctness_filtered_list):
@@ -273,35 +280,34 @@ async def training_loop(config: Dict[str, Any]):
         # print(f"[Step {step}] correctness tensor shape: {correctness_tensor.shape}")
 
         st = time.time()
-        # try:
-        #     rm_scores = rm_model.score_reference(questions, candidates, rm_config)
-        # except Exception as e:
-        #     print(f"[Step {step}] Exception during RM scoring: {e} will retry batch with 0.25 batch size.")
-        #     torch.cuda.empty_cache()
-        #     rm_scores = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
-        # torch.cuda.empty_cache()
+        try:
+            rm_scores = rm_model.score_reference(questions, candidates, rm_config)
+        except Exception as e:
+            print(f"[Step {step}] Exception during RM scoring: {e} will retry batch with 0.25 batch size.")
+            torch.cuda.empty_cache()
+            rm_scores = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
+        torch.cuda.empty_cache()
         # Silenced log output
         # print(f'rm_scores Total time: {time.time() - st}')
 
 
-        # triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
+        triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
         # print(triplets)
-        # if not triplets:
+        if not triplets:
             # Silenced log output
             # print(f"[Step {step}] No valid pos/neg triplets after selection, skipping.")
-            # continue
+            continue
         st = time.time()
-        # avg_loss, lr_rate = rm_model.train_step(triplets, accel)
+        avg_loss, lr_rate = rm_model.train_step(triplets)
 
         # Silenced log output
         # print(f'rm_model.train_step Total time: {time.time() - st}')
-        # print(f"[Step {step}] Loss: {avg_loss:.4f} lr rate: {lr_rate:.6f}")
-        rm_scores = []
+        print(f"[Step {step}] Loss: {avg_loss:.4f} lr rate: {lr_rate:.6f}")
         log_questions(questions, gold_answers, candidates, rm_scores, correctness_filtered_list)
         # raise
         if step % save_every == 0 and step > 0:
             checkpoint_path = os.path.join(out_dir, f"checkpoint-{step}")
-            accel.save_state(checkpoint_path)
+
             # Silenced log output
             # print(f"[Step {step}] Saved checkpoint to {checkpoint_path}")
 
