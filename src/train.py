@@ -266,10 +266,10 @@ async def training_loop(config: Dict[str, Any]):
 
         # Convert correctness to padded tensor after filtering
 
-        candidates = questions_full.apply(lambda x: [i['candidates'] for i in x])
-        correctness_filtered_list = questions_full.apply(lambda x: [i['correctness'] for i in x])
-        questions = questions_full.apply(lambda x: [i['question'] for i in x])
-        gold_answers = questions_full.apply(lambda x: [i['gold_answer'] for i in x])
+        candidates = [i['candidates'] for i in questions_full]
+        correctness_filtered_list = [i['correctness'] for i in questions_full]
+        questions = [i['question'] for i in questions_full]
+        gold_answers = [i['gold_answer'] for i in questions_full]
 
 
         max_k = max((len(row) for row in candidates), default=0)
