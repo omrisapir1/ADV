@@ -314,7 +314,7 @@ async def training_loop(config: Dict[str, Any]):
         # print(f"[Step {step}] Completed batch with {len(questions)} questions. Triplets selected: {len(triplets)}")
 
     final_path = os.path.join(out_dir, "final")
-    accel.save_state(final_path)
+
 
 
 def run(config_path: str):
