@@ -256,7 +256,7 @@ class AceMathRewardModel:
                     self.optimizer.zero_grad(set_to_none=True)
                 del r_pos, r_neg, loss_full, batch_q, batch_pos, batch_neg, batch
             except Exception as e:
-                raise 
+                raise
                 print(f"Exception during RM training step: {e} will skip batch...")
                 continue
 
