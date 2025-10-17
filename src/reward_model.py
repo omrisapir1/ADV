@@ -236,6 +236,7 @@ class AceMathRewardModel:
             batch_pos = [t[1] for t in batch]
             batch_neg = [t[2] for t in batch]
             try:
+                print(f'batch pos is {batch_pos}')
                 r_pos, r_neg = self.score_pairs(batch_q, batch_pos, batch_neg, self.rm_config)
                 assert r_pos.shape == r_neg.shape
                 loss_full = pairwise_rm_loss(r_pos, r_neg)
