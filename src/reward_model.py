@@ -222,6 +222,8 @@ class AceMathRewardModel:
 
     def train_step(self, triplets: List[Tuple[str, str, str]]) -> Tuple[float, float]:
         assert self.optimizer is not None and self.scheduler is not None, "Optimizer/scheduler not initialized."
+
+        self.model.gradient_checkpointing_enable()
         self.model.train()
         batch_size = self.pair_batch_size
         total_loss = 0.0
@@ -254,6 +256,7 @@ class AceMathRewardModel:
                     self.optimizer.zero_grad(set_to_none=True)
                 del r_pos, r_neg, loss_full, batch_q, batch_pos, batch_neg, batch
             except Exception as e:
+                raise 
                 print(f"Exception during RM training step: {e} will skip batch...")
                 continue
 
