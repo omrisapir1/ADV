@@ -4,6 +4,7 @@ import asyncio
 import random
 import os
 from typing import List, Dict, Any, Optional, Tuple
+import requests
 from openai import AsyncOpenAI
 from openai._exceptions import APIStatusError, RateLimitError
 import re
@@ -11,114 +12,37 @@ import re
 THINK_STOP = "</think>"
 
 class AsyncSGLangEngineWrapper:
-    """
-    Async OpenAI-compatible client wrapper for an SGLang server.
-
-    Server example:
-      sglang-serve --model Qwen/Qwen2.5-Math-1.5B-Instruct \
-                   --host 0.0.0.0 --port 30000 --dtype bfloat16 \
-                   --kv-cache-dtype fp8_e5m2 --mem-fraction-static 0.75
-
-    Env example:
-      export SGLANG_BASE_URL="http://localhost:30000/v1"
-      export SGLANG_API_KEY="EMPTY"
-    """
-
+    """Simplified SGLang engine wrapper using generation config (no default fallbacks)."""
     def __init__(self, model_name: str, sglang_config: Optional[Dict[str, Any]] = None):
         sglang_config = sglang_config or {}
-        base_url = sglang_config.get("base_url") or os.environ.get("SGLANG_BASE_URL", "http://localhost:30000/v1")
-        api_key  = sglang_config.get("api_key")  or os.environ.get("SGLANG_API_KEY", "EMPTY")
-
+        # Base URL / API key fixed unless provided elsewhere; user manages server separately.
+        base_url = "http://localhost:30000/v1"
+        api_key  = "EMPTY"
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         self.model_name = model_name
+        # Concurrency from config; will raise if missing.
+        self._semaphore = asyncio.Semaphore(sglang_config.get("max_concurrency"))
 
-        # Optional: limit client-side concurrency to avoid overload
-        self._semaphore = asyncio.Semaphore(sglang_config.get("max_concurrency", 16))
-
-        # Simple retry/backoff config
-        self._max_retries = sglang_config.get("max_retries", 3)
-        self._base_backoff = sglang_config.get("base_backoff", 0.5)  # seconds
-
-    async def _completions_call(
-        self,
-        prompt: str,
-        n: int,
-        *,
-        temperature: float,
-        top_p: float,
-        max_tokens: int,
-        stop: Optional[List[str]],
-        top_k: int,
-        repetition_penalty: float,
-        extra_body: Optional[Dict[str, Any]] = None,
-    ) -> List[str]:
-        payload_extra = {"top_k": top_k, "repetition_penalty": repetition_penalty}
-        if extra_body:
-            payload_extra.update(extra_body)
-
-        attempt = 0
-        while True:
-            attempt += 1
-            try:
-                async with self._semaphore:
-                    resp = await self.client.completions.create(
-                        model=self.model_name,
-                        prompt=prompt,
-                        n=n,
-                        temperature=temperature,
-                        top_p=top_p,
-                        max_tokens=max_tokens,
-                        stop=stop,
-                        extra_body=payload_extra,
-                    )
-                return [c.text or "" for c in resp.choices]
-
-            except (RateLimitError, APIStatusError):
-                if attempt > self._max_retries:
-                    raise
-                # Exponential backoff with jitter
-                sleep_s = self._base_backoff * (2 ** (attempt - 1)) * (0.8 + 0.4 * random.random())
-                await asyncio.sleep(sleep_s)
-
-    @staticmethod
-    def _ensure_think_stop_in_context(prefix: str, think_piece: str) -> Tuple[str, str]:
-        """
-        Make sure the continuation context ends with the THINK_STOP token exactly once.
-        Returns (context_with_stop, clean_think_text_without_stop).
-        """
-        text = think_piece
-        # Strip any accidental duplicates or partials and re-add a single terminator.
-        if THINK_STOP in text:
-            # Keep content up to the first occurrence; everything after is for phase 2
-            text = text.split(THINK_STOP, 1)[0]
-        context = prefix + text + THINK_STOP
-        return context, text
+    def hot_swap(self, tmp_weights_path: str):
+        url = "http://localhost:30000/update_weights_from_disk"
+        data = {"model_path": tmp_weights_path}
+        requests.post(url, json=data)
 
     async def _two_phase_for_one_prompt(
-            self,
-            base_prompt: str,
-            *,
-            n_samples: int,
-            # Phase 1 (thinking) params
-            think_temperature: float,
-            think_top_p: float,
-            think_max_new_tokens: int,
-            think_top_k: int,
-            think_repetition_penalty: float,
-            answer_max_new_tokens: int,
+        self,
+        base_prompt: str,
+        *,
+        n_samples: int,
+        think_temperature: float,
+        think_top_p: float,
+        think_max_new_tokens: int,
+        think_top_k: int,
+        think_repetition_penalty: float,
+        answer_max_new_tokens: int,
+        answer_stop: List[str],
     ) -> List[tuple[str, int]]:
-        """
-        Two-phase generation for a single prompt:
-          - Phase 1: sample until </think>
-          - Phase 2: greedy continuation to the end (or until answer_stop)
-        Returns:
-          List of (text, flag), flag=1 if Phase-2 executed, else 0.
-        """
-        THINK_STOP = "</think>"
-
-        # ---------- Phase 1: sample until </think> ----------
+        """Two-phase generation for a single prompt."""
         payload_extra_1 = {"top_k": think_top_k, "repetition_penalty": think_repetition_penalty}
-
         resp1 = await self.client.completions.create(
             model=self.model_name,
             prompt=base_prompt,
@@ -129,33 +53,20 @@ class AsyncSGLangEngineWrapper:
             stop=[THINK_STOP],
             extra_body=payload_extra_1,
         )
-
-        # Prepare outputs with placeholders (to keep original order)
         results: List[tuple[str, int]] = [("", 0)] * len(resp1.choices)
-
-        # Collect contexts that are eligible for Phase-2 (run concurrently)
-        phase2_items = []  # list of (idx, think_clean, context)
+        phase2_items: List[Tuple[int, str, str]] = []
         for idx, choice in enumerate(resp1.choices):
             think_piece = (choice.text or "")
             finish_reason = getattr(choice, "finish_reason", None)
-
-            # Not eligible for Phase-2 if didn't stop on THINK_STOP OR already contains \boxed{...}
             if finish_reason != "stop" or re.findall(r"\\boxed\s*\{(.*?)\}", think_piece or "", flags=re.DOTALL):
                 results[idx] = (think_piece, 0)
                 continue
-
-            # Build continuation context ending with exactly one THINK_STOP
             think_clean = think_piece.split(THINK_STOP, 1)[0] if THINK_STOP in think_piece else think_piece
             context = base_prompt + think_clean + THINK_STOP
             phase2_items.append((idx, think_clean, context))
-
-        # If nothing to continue, return early
         if not phase2_items:
             return results
-
-        # ---------- Phase 2: run all greedy continuations concurrently ----------
         payload_extra_2 = {"top_k": 0, "repetition_penalty": 1.0}
-
         async def _greedy(ctx: str):
             return await self.client.completions.create(
                 model=self.model_name,
@@ -164,18 +75,15 @@ class AsyncSGLangEngineWrapper:
                 temperature=0.0,
                 top_p=1.0,
                 max_tokens=answer_max_new_tokens,
+                stop=answer_stop if answer_stop else None,
                 extra_body=payload_extra_2,
             )
-
         tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx in phase2_items]
         resp2_list = await asyncio.gather(*tasks)
-
-        # Stitch results back in original order
         for (idx, think_clean, _), resp2 in zip(phase2_items, resp2_list):
             answer_text = (resp2.choices[0].text or "") if resp2.choices else ""
             full_text = think_clean + THINK_STOP + answer_text
             results[idx] = (full_text, 1)
-
         return results
 
     async def generate_candidates(
@@ -184,23 +92,14 @@ class AsyncSGLangEngineWrapper:
         n_samples: int,
         **gen_cfg: Any,
     ) -> List[List[tuple[str, int]]]:
-        """
-        Default behavior: TWO-PHASE generation.
-        - Phase 1 (sampling): until </think>
-        - Phase 2 (greedy): deterministic continuation
-        Returns:
-          List[List[(text, flag)]] aligned with `prompts`.
-        """
-        # Phase 1 (thinking) config
-        think_temperature = float(gen_cfg.get("think_temperature", gen_cfg.get("temperature", 0.9)))
-        think_top_p = float(gen_cfg.get("think_top_p", gen_cfg.get("top_p", 0.95)))
-        think_top_k = int(gen_cfg.get("think_top_k", gen_cfg.get("top_k", 0)))
-        think_repetition_penalty = float(gen_cfg.get("think_repetition_penalty", gen_cfg.get("repetition_penalty", 1.05)))
-        think_max_new_tokens = int(gen_cfg.get("think_max_new_tokens", 512))
-
-        # Phase 2 (answer) config
-        answer_max_new_tokens = int(gen_cfg.get("answer_max_new_tokens", 512))
-
+        """Generate candidates for each prompt using two-phase method with config values."""
+        think_temperature = gen_cfg.get("think_temperature")
+        think_top_p = gen_cfg.get("think_top_p")
+        think_top_k = gen_cfg.get("think_top_k")
+        think_repetition_penalty = gen_cfg.get("think_repetition_penalty")
+        think_max_new_tokens = gen_cfg.get("think_max_new_tokens")
+        answer_max_new_tokens = gen_cfg.get("answer_max_new_tokens")
+        answer_stop = gen_cfg.get("answer_stop")
         tasks = [
             asyncio.create_task(
                 self._two_phase_for_one_prompt(
@@ -212,12 +111,11 @@ class AsyncSGLangEngineWrapper:
                     think_top_k=think_top_k,
                     think_repetition_penalty=think_repetition_penalty,
                     answer_max_new_tokens=answer_max_new_tokens,
+                    answer_stop=answer_stop,
                 )
-            )
-            for p in prompts
+            ) for p in prompts
         ]
-        per_prompt_lists: List[List[tuple[str, int]]] = await asyncio.gather(*tasks)
-        return per_prompt_lists
+        return await asyncio.gather(*tasks)
 
 
 def build_sglang_engine(model_name: str, sglang_config: Optional[Dict[str, Any]] = None) -> AsyncSGLangEngineWrapper:

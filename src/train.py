@@ -1,5 +1,3 @@
-import time
-from typing import Dict, Any, List, Tuple
 import asyncio
 import yaml
 import torch
@@ -7,12 +5,14 @@ import json
 import os
 import shutil
 from datetime import datetime
+from typing import Dict, Any, List, Tuple, Optional
 from datasets import load_dataset
 from transformers import AutoTokenizer
 from .prompting import build_prompts
 from .generation import build_sglang_engine
 from .reward_model import load_reward_model
 from .answer_parse import compute_final_correctness
+from .llm_trainer import load_llm_trainer
 
 
 
@@ -46,7 +46,7 @@ def get_batch_records(dataset_obj, batch_size: int, step: int) -> List[Dict[str,
 
 LOG_DIR = "/workspace/ADV/src/data"  # central log directory path
 
-def log_questions(questions: List[str], gold_answers: List[str], candidates: List[List[str]], rm_scores: torch.Tensor, correctness: List[List[bool]]):
+def log_questions(questions: List[str], gold_answers: List[str], candidates: List[List[str]], rm_scores: torch.Tensor, correctness: List[List[int]]):
     """Log training results to disk in JSON format.
 
     Ensures all tensor / non-serializable types are converted to native Python types.
@@ -170,116 +170,110 @@ def ensure_empty_log_dir(path: str):
         os.makedirs(path, exist_ok=True)
 
 
+def filter_and_select_mixed(
+    questions: List[str],
+    gold_answers: List[str],
+    candidate_texts: List[List[str]],
+    candidate_valid_flags: List[List[int]],
+    correctness: List[List[int]],
+) -> Tuple[List[str], List[str], List[List[str]], List[List[int]]]:
+    """Filter candidates removing invalid-but-correct items and select only questions
+    that have mixed correctness (both 0 and 1 present). Returns filtered versions.
+    If no mixed items remain, returns empty lists.
+    """
+    filtered_candidate_texts: List[List[str]] = []
+    filtered_correctness: List[List[int]] = []
+    for texts_row, flags_row, corr_row in zip(candidate_texts, candidate_valid_flags, correctness):
+        new_texts: List[str] = []
+        new_corr: List[int] = []
+        for t, f, corr in zip(texts_row, flags_row, corr_row):
+            if corr == -1 or (f == 0 and corr == 1):
+                continue
+            new_texts.append(t)
+            new_corr.append(corr)
+        filtered_candidate_texts.append(new_texts)
+        filtered_correctness.append(new_corr)
+
+    # Identify mixed correctness questions
+    mixed_indices: List[int] = []
+    for i, row in enumerate(filtered_correctness):
+        vals = set(row)
+        if 1 in vals and 0 in vals:
+            mixed_indices.append(i)
+    if not mixed_indices:
+        return [], [], [], []
+
+    questions_f = [questions[i] for i in mixed_indices]
+    gold_answers_f = [gold_answers[i] for i in mixed_indices]
+    candidates_f = [filtered_candidate_texts[i] for i in mixed_indices]
+    correctness_f = [filtered_correctness[i] for i in mixed_indices]
+    return questions_f, gold_answers_f, candidates_f, correctness_f
+
+
+async def _async_save_model(trainer, path: str):
+    """Run model.save_pretrained in a thread to avoid blocking event loop."""
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, trainer.save_model, path)
+
+async def _async_hot_swap(engine, path: str):
+    """Invoke engine.hot_swap off the event loop (blocking requests.post)."""
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, engine.hot_swap, path)
+
+
 async def training_loop(config: Dict[str, Any]):
     rm_config = config.get("reward_model", {})
-    train_config = rm_config.get("train", {})
-    mixed_precision = train_config.get("mixed_precision", "bf16")
-    grad_accum = train_config.get("grad_accum", 1)
-
     llm_name = config["model"]["llm_name"]
     rm_name = config["model"]["rm_name"]
-    sglang_config = config.get("sglang", {})  # new config section for SGLang
-    llm_gpu = config["hardware"].get("llm_gpu_id", 0)
-    rm_gpu = config["hardware"].get("rm_gpu_id", 1)
-    gen_cfg = config["generation"]
-    n_samples = gen_cfg["n_samples_per_problem"]
+    generation_config = config.get("generation")
+    n_samples = generation_config["n_samples_per_problem"]
+    llm_gpu = config["hardware"].get("llm_gpu_id")
+    rm_gpu = config["hardware"].get("rm_gpu_id")
+    llm_trainer_config = config.get("llm_trainer")
     num_steps = config["train"]["num_steps"]
     batch_size = config["train"]["batch_size"]
-    save_every = train_config.get("save_every", 500)
-    out_dir = train_config.get("out_dir", "/workspace/ADV/checkpoints/rm")
+    tmp_weights_path = config.get("tmp_weights_safetensors_path")  # path with potential typo kept as-is
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
-    # Initialize reward model with integrated optimizer/scheduler via accelerator
     rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
-
-    # Build SGLang engine
-    # engine = build_sglang_engine(llm_name, sglang_config)
-    # dataset_obj, q_field, a_field = load_dataset_handle(config)
-    os.makedirs(out_dir, exist_ok=True)
-
-    # Ensure log directory is clean at the start of training
+    llm_trainer = load_llm_trainer(llm_name, llm_gpu, llm_trainer_config)
+    engine = build_sglang_engine(llm_name, generation_config)
+    dataset_obj, q_field, a_field = load_dataset_handle(config)
     ensure_empty_log_dir(LOG_DIR)
-    import pandas as pd
-    df = pd.read_json("/workspace/ADV/all_j.json")
+
+    last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
+    last_swap_task: Optional[asyncio.Task] = None
     for step in range(num_steps):
-        questions_full = df.iloc[step]['questions']
-    #     records = get_batch_records(dataset_obj, batch_size, step)
-    #     questions = [r[q_field] for r in records]
-    #     gold_answers = [r[a_field] for r in records]
-    #     prompts = build_prompts(questions, tokenizer)
-    #     st = time.time()
-    #     raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **gen_cfg)
-        # print(f'Candidate generation Total time: {time.time() - st}')
-        # raw_candidates: List[List[(text, valid_flag)]] where valid_flag=1 if phase-2 executed, else 0
-        # Extract candidate texts and validity flags
-        # candidate_texts = [[c[0] for c in row] for row in raw_candidates]
-        # candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
-        # Silenced log output
-        # print(f'candidates Total time: {time.time() - st}')
-        # print(f"[Step {step}] Generated candidates per question: {[len(c) for c in candidate_texts]}")
+        # ---- HOT SWAP (beginning of iteration, except first) ----
+        # Must ensure previous save finished before hot swap.
 
-        # Compute correctness on the raw candidate texts
-        st = time.time()
-        # correctness = compute_final_correctness(candidate_texts, gold_answers)  # list of lists (0/1)
-        # Silenced log output
-        # print(f'correctness Total time: {time.time() - st}')
-        # print(f'correctness: {correctness}')
+        # ---- Candidate Generation ----
+        records = get_batch_records(dataset_obj, batch_size, step)
+        questions = [r[q_field] for r in records]
+        gold_answers = [r[a_field] for r in records]
+        prompts = build_prompts(questions, tokenizer)
+        raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
 
-        # Filter out candidates that are invalid (valid_flag==0) yet marked correct (correctness==1).
-        # filtered_candidate_texts: List[List[str]] = []
-        # filtered_correctness: List[List[int]] = []
-        # for qi, (texts_row, flags_row, corr_row) in enumerate(zip(candidate_texts, candidate_valid_flags, correctness)):
-        #     new_texts: List[str] = []
-        #     new_corr: List[int] = []
-        #     for t, f, corr in zip(texts_row, flags_row, corr_row):
-        #         # Drop only if candidate invalid (f==0) but correctness says it's correct (corr==1)
-        #         if corr ==-1 or (f == 0 and corr == 1):
-        #             continue
-        #         new_texts.append(t)
-        #         new_corr.append(corr)
-        #     filtered_candidate_texts.append(new_texts)
-        #     filtered_correctness.append(new_corr)
-        # # Replace working variables with filtered versions
-        # candidates = filtered_candidate_texts
-        # correctness = filtered_correctness
-        #
-        # # Identify questions with mixed correctness (both 0 and 1 present after filtering)
-        # filtered_indices = []
-        # for i, question_correctness in enumerate(correctness):
-        #     unique_values = set(question_correctness)
-        #     # Silenced log output
-        #     # print(f'question_correctness for question {i}: {question_correctness}, unique values: {unique_values}')
-        #     # print(f'unique values: {unique_values}')
-        #     if 1 in unique_values and 0 in unique_values:
-        #         filtered_indices.append(i)
-        # if not filtered_indices:
-        #     # Silenced log output
-        #     # print(f"[Step {step}] No mixed correctness examples found, skipping this batch")
-        #     continue
-        # # Silenced log output
-        # # print(f"[Step {step}] Filtered from {len(questions)} to {len(filtered_indices)} examples with mixed correctness")
-        #
-        # questions = [questions[i] for i in filtered_indices]
-        # gold_answers = [gold_answers[i] for i in filtered_indices]
-        # candidates = [candidates[i] for i in filtered_indices]
-        # correctness_filtered_list = [correctness[i] for i in filtered_indices]
-
-        # Convert correctness to padded tensor after filtering
-
-        candidates = [i['candidates'] for i in questions_full]
-        correctness_filtered_list = [i['correctness'] for i in questions_full]
-        questions = [i['question'] for i in questions_full]
-        gold_answers = [i['gold_answer'] for i in questions_full]
+        if last_save_task is not None:
+            await last_save_task  # wait for save completion
+            last_save_task = None
+            # hot-swap freshly saved weights before new generation
+            last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
 
 
+        candidate_texts = [[c[0] for c in row] for row in raw_candidates]
+        candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
+        correctness = compute_final_correctness(candidate_texts, gold_answers)
+
+        questions, gold_answers, candidates, correctness_filtered_list = filter_and_select_mixed(
+            questions, gold_answers, candidate_texts, candidate_valid_flags, correctness
+        )
+        if not questions:
+            continue
         max_k = max((len(row) for row in candidates), default=0)
         correctness_tensor = torch.zeros(len(candidates), max_k, dtype=torch.int32)
         for qi, row in enumerate(correctness_filtered_list):
             correctness_tensor[qi, :len(row)] = torch.tensor(row, dtype=torch.int32)
-        # Silenced log output
-        # print(f"[Step {step}] correctness tensor shape: {correctness_tensor.shape}")
-
-        st = time.time()
         try:
             rm_scores = rm_model.score_reference(questions, candidates, rm_config)
         except Exception as e:
@@ -287,34 +281,25 @@ async def training_loop(config: Dict[str, Any]):
             torch.cuda.empty_cache()
             rm_scores = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
         torch.cuda.empty_cache()
-        # Silenced log output
-        print(f'rm_scores Total time: {time.time() - st}')
-
         triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
-        # print(triplets)
         if not triplets:
-            # Silenced log output
-            # print(f"[Step {step}] No valid pos/neg triplets after selection, skipping.")
             continue
-        st = time.time()
-        avg_loss, lr_rate = rm_model.train_step(triplets)
+        rm_avg_loss = rm_model.train_step(triplets)
+        llm_avg_loss = llm_trainer.train_step(triplets)
+        print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
 
-        # Silenced log output
-        # print(f'rm_model.train_step Total time: {time.time() - st}')
-        print(f"[Step {step}] Loss: {avg_loss:.4f} lr rate: {lr_rate:.6f}")
         log_questions(questions, gold_answers, candidates, rm_scores, correctness_filtered_list)
-        # raise
-        if step % save_every == 0 and step > 0:
-            checkpoint_path = os.path.join(out_dir, f"checkpoint-{step}")
 
-            # Silenced log output
-            # print(f"[Step {step}] Saved checkpoint to {checkpoint_path}")
+        # ---- ASYNC SAVE (end of iteration) ----
+        # Before starting new save ensure earlier hot swap is done (we awaited it already above before generation).
+        # Launch save task so disk write can overlap with next RM scoring & other CPU work.
+        if last_swap_task is not None:
+            await last_swap_task
+        last_save_task = asyncio.create_task(_async_save_model(llm_trainer, tmp_weights_path))
 
-        # Silenced log output
-        # print(f"[Step {step}] Completed batch with {len(questions)} questions. Triplets selected: {len(triplets)}")
-
-    final_path = os.path.join(out_dir, "final")
-
+    # Final wait to ensure last save completes.
+    if last_save_task is not None:
+        await last_save_task
 
 
 def run(config_path: str):

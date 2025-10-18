@@ -22,12 +22,11 @@ class AceMathRewardModel:
         device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
         self.model_name = model_name
         self.device = device
-        self.rm_config = rm_config or {}
-        self.train_config = self.rm_config.get("train", {}) if isinstance(self.rm_config.get("train", {}), dict) else {}
+        self.rm_config = rm_config  # no fallback
+        self.train_config = self.rm_config.get("train")
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=True)
-        if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token_id = getattr(self.tokenizer, "eos_token_id", 0)
+        self.tokenizer.pad_token_id = getattr(self.tokenizer, "eos_token_id", 0)
         self.tokenizer.padding_side = "right"
 
         self.model = AutoModelForSequenceClassification.from_pretrained(
@@ -50,9 +49,9 @@ class AceMathRewardModel:
             self._setup_training(num_steps)
 
     def _setup_training(self, num_steps: int):
-        self.grad_accum = int(self.train_config.get("grad_accum", 1) or 1)
+        self.grad_accum = int(self.train_config.get("grad_accum"))
         self.grad_clip = self.train_config.get("grad_clip")
-        self.pair_batch_size = int(self.train_config.get("batch_size", 1) or 1)
+        self.pair_batch_size = int(self.train_config.get("batch_size"))
         self.optimizer = create_optimizer(self, self.rm_config)
         self.scheduler = create_scheduler(self.optimizer, self.rm_config, num_steps)
         self.model.gradient_checkpointing_enable()
@@ -107,10 +106,9 @@ class AceMathRewardModel:
     # -------------------- Reference scoring --------------------
     def score_reference(self, questions: List[str], candidates_by_q: List[List[str]], rm_config: Optional[dict] = None, forced_small_batch_size=False) -> torch.Tensor:
         self.model.eval()
-        rm_config = rm_config or self.rm_config
-        pad_to_mult8 = bool(rm_config.get("pad_to_multiple_of_8", False))
-        max_tokens = int(rm_config.get("max_tokens_per_batch_infer", 64000))
-        max_seqs = int(rm_config.get("max_seqs_per_infer_batch", 80))
+        pad_to_mult8 = bool(rm_config.get("pad_to_multiple_of_8"))
+        max_tokens = int(rm_config.get("max_tokens_per_batch_infer"))
+        max_seqs = int(rm_config.get("max_seqs_per_infer_batch"))
         if forced_small_batch_size:
             max_tokens = int(max_tokens * 0.25)
             max_seqs = int(max_seqs * 0.25)
@@ -180,11 +178,8 @@ class AceMathRewardModel:
 
     # -------------------- Pair scoring (pos/neg) --------------------
     def score_pairs(self, questions: List[str], solutions_pos: List[str], solutions_neg: List[str], rm_config: Optional[dict] = None) -> Tuple[torch.Tensor, torch.Tensor]:
-        assert len(questions) == len(solutions_pos) == len(solutions_neg)
-        if len(questions) == 0:
-            return (torch.empty(0, device=self.device), torch.empty(0, device=self.device))
-        rm_config = rm_config or self.rm_config
-        pad_to_mult8 = bool(rm_config.get("pad_to_multiple_of_8", False))
+        rm_config = rm_config if rm_config is not None else self.rm_config
+        pad_to_mult8 = bool(rm_config.get("pad_to_multiple_of_8"))
 
         texts: List[str] = []
         for q, p, n in zip(questions, solutions_pos, solutions_neg):
@@ -219,49 +214,34 @@ class AceMathRewardModel:
         r_neg = original_logits[1::2]
         return r_pos, r_neg
 
-    def train_step(self, triplets: List[Tuple[str, str, str]]) -> Tuple[float, float]:
-        assert self.optimizer is not None and self.scheduler is not None, "Optimizer/scheduler not initialized."
-
+    def train_step(self, triplets: List[Tuple[str, str, str]]) -> float:
         self.model.gradient_checkpointing_enable()
         self.model.train()
         batch_size = self.pair_batch_size
         total_loss = 0.0
         num_batches = 0
-        accum_steps = self.grad_accum or 1
-        # Ensure gradients cleared before accumulation
+        accum_steps = self.grad_accum
         self.optimizer.zero_grad(set_to_none=True)
-
         for start in range(0, len(triplets), batch_size):
             end = min(start + batch_size, len(triplets))
             batch = triplets[start:end]
             batch_q = [t[0] for t in batch]
             batch_pos = [t[1] for t in batch]
             batch_neg = [t[2] for t in batch]
-            try:
-
-                r_pos, r_neg = self.score_pairs(batch_q, batch_pos, batch_neg, self.rm_config)
-                assert r_pos.shape == r_neg.shape
-                loss_full = pairwise_rm_loss(r_pos, r_neg)
-                total_loss += loss_full.detach().item()
-                num_batches += 1
-                # Scale loss for gradient accumulation
-                (loss_full / accum_steps).backward()
-                # Step after accum_steps or at final batch
-                if num_batches % accum_steps == 0 or end == len(triplets):
-                    if self.grad_clip is not None:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
-                    self.optimizer.step()
-                    self.scheduler.step()
-                    self.optimizer.zero_grad(set_to_none=True)
-                del r_pos, r_neg, loss_full, batch_q, batch_pos, batch_neg, batch
-            except Exception as e:
-                raise
-                print(f"Exception during RM training step: {e} will skip batch...")
-                continue
+            r_pos, r_neg = self.score_pairs(batch_q, batch_pos, batch_neg, self.rm_config)
+            loss_full = pairwise_rm_loss(r_pos, r_neg)
+            total_loss += loss_full.detach().item()
+            num_batches += 1
+            (loss_full / accum_steps).backward()
+            if num_batches % accum_steps == 0 or end == len(triplets):
+                if self.grad_clip is not None:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                self.optimizer.step()
+                self.scheduler.step()
+                self.optimizer.zero_grad(set_to_none=True)
+            del r_pos, r_neg, loss_full, batch_q, batch_pos, batch_neg, batch
         torch.cuda.empty_cache()
-        avg_loss = total_loss / num_batches if num_batches else 0.0
-        current_lr = float(self.optimizer.param_groups[0]["lr"]) if self.optimizer else 0.0
-        return avg_loss, current_lr
+        return total_loss / num_batches if num_batches else 0.0
 
 
 def load_reward_model(model_name: str, gpu_id: int, rm_config: Optional[dict] = None, num_steps: Optional[int] = None) -> AceMathRewardModel:
