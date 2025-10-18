@@ -195,7 +195,6 @@ class AceMathRewardModel:
         lengths = [len(ids) for ids in prelim["input_ids"]]
         order = sorted(range(len(texts)), key=lambda i: lengths[i], reverse=True)
         texts_sorted = [texts[i] for i in order]
-        print(f'len of texts_sorted: {len(texts_sorted)}')
         enc = self.tokenizer(
             texts_sorted,
             padding=True,
