@@ -259,7 +259,7 @@ class AceMathRewardModel:
                 raise
                 print(f"Exception during RM training step: {e} will skip batch...")
                 continue
-
+        torch.cuda.empty_cache()
         avg_loss = total_loss / num_batches if num_batches else 0.0
         current_lr = float(self.optimizer.param_groups[0]["lr"]) if self.optimizer else 0.0
         return avg_loss, current_lr
