@@ -242,7 +242,7 @@ class AceMathRewardModel:
             del r_pos, r_neg, loss_full, batch_q, batch_pos, batch_neg, batch
         torch.cuda.empty_cache()
         return total_loss / num_batches if num_batches else 0.0
-    
+
 
 
 def load_reward_model(model_name: str, gpu_id: int, rm_config: Optional[dict] = None, num_steps: Optional[int] = None) -> AceMathRewardModel:

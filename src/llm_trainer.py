@@ -167,6 +167,7 @@ class LLMTrainer:
           - Call optimizer.step() and scheduler.step() ONCE at the end.
           - Free per-batch CUDA tensors ASAP to keep memory low.
         """
+        self.model.gradient_checkpointing_enable()
         self.model.train()
         if hasattr(self.reference_model, "eval"):
             self.reference_model.eval()  # make sure ref is not building grads
