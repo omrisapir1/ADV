@@ -57,7 +57,7 @@ class LLMTrainer:
         self.reference_model.config.pad_token_id = self.tokenizer.pad_token_id
 
         self.optimizer = create_optimizer(self, config=config)
-        self.scheduler = create_scheduler(self.optimizer, self.rm_config, num_steps)
+        self.scheduler = create_scheduler(self.optimizer, num_steps)
         self.model.gradient_checkpointing_enable()
 
     @torch.no_grad()
