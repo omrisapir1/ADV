@@ -1,6 +1,6 @@
 python3 -m sglang.launch_server   --model omrisap/Qwen2.5-Math-1.5B-5K-SFT-think \
   --host 0.0.0.0 --port 30000 \
   --dtype bfloat16 \
-  --mem-fraction-static 0.35 \
+  --mem-fraction-static 0.15 \
   --chunked-prefill-size 4096
   --tp 1

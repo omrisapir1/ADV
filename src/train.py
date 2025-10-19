@@ -14,7 +14,7 @@ from .reward_model import load_reward_model
 from .answer_parse import compute_final_correctness
 from .llm_trainer import load_llm_trainer
 
-
+import time
 
 def load_config(path: str) -> Dict[str, Any]:
     with open(path, "r") as f:
@@ -252,7 +252,9 @@ async def training_loop(config: Dict[str, Any]):
         questions = [r[q_field] for r in records]
         gold_answers = [r[a_field] for r in records]
         prompts = build_prompts(questions, tokenizer)
+        st = time.time()
         raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
+        print(f"[Step {step}] Generation time: {time.time() - st:.2f}s")
 
         if last_save_task is not None:
             await last_save_task  # wait for save completion
@@ -274,19 +276,23 @@ async def training_loop(config: Dict[str, Any]):
         correctness_tensor = torch.zeros(len(candidates), max_k, dtype=torch.int32)
         for qi, row in enumerate(correctness_filtered_list):
             correctness_tensor[qi, :len(row)] = torch.tensor(row, dtype=torch.int32)
+        st = time.time()
         try:
             rm_scores = rm_model.score_reference(questions, candidates, rm_config)
         except Exception as e:
             print(f"[Step {step}] Exception during RM scoring: {e} will retry batch with 0.25 batch size.")
             torch.cuda.empty_cache()
             rm_scores = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
+        print(f"[Step {step}] RM Scoring time: {time.time() - st:.2f}s")
         torch.cuda.empty_cache()
         triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
         if not triplets:
             continue
         # rm_avg_loss = rm_model.train_step(triplets)
         rm_avg_loss = 0
+        st = time.time()
         llm_avg_loss = llm_trainer.train_step(triplets)
+        print(f"[Step {step}] LLM Training time: {time.time() - st:.2f}s")
         print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
 
         log_questions(questions, gold_answers, candidates, rm_scores, correctness_filtered_list)
