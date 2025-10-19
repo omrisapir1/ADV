@@ -246,7 +246,7 @@ async def training_loop(config: Dict[str, Any]):
     import pandas as pd
     df= pd.read_json("/workspace/ADV/all_jsons.json")
     for step in range(num_steps):
-        questions_full = df.iloc[step]
+        questions_full = df.iloc[step]['questions']
         # ---- HOT SWAP (beginning of iteration, except first) ----
         # Must ensure previous save finished before hot swap.
 
