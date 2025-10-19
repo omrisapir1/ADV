@@ -288,10 +288,10 @@ async def training_loop(config: Dict[str, Any]):
         triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
         if not triplets:
             continue
-        # rm_avg_loss = rm_model.train_step(triplets)
-        rm_avg_loss = 0
+        rm_avg_loss = rm_model.train_step(triplets)
+        llm_avg_loss = 0
         st = time.time()
-        llm_avg_loss = llm_trainer.train_step(triplets)
+        # llm_avg_loss = llm_trainer.train_step(triplets)
         print(f"[Step {step}] LLM Training time: {time.time() - st:.2f}s")
         print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
 
