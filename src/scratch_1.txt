@@ -2,8 +2,16 @@ python3 -m sglang.launch_server   --model omrisap/Qwen2.5-Math-1.5B-5K-SFT-think
   --host 0.0.0.0 --port 30000 \
   --dtype bfloat16 \
   --mem-fraction-static 0.15 \
-  --tp 1
-  --enable-prefix-caching
+  --tp 1 \
+  --disable-cuda-graph \
+  --max-prefill-tokens 32000
+
+
+
+
+
+
+
   --enable-chunked-prefill
   --disable-cuda-graph
-  --max-num-batched-tokens 32768
+  -
