@@ -155,21 +155,33 @@ class LLMTrainer:
         logits = beta * ((pol_pos - pol_neg) - (ref_pos - ref_neg))
         return -F.logsigmoid(logits).mean()
 
+
     def train_step(self, triplets: List[Tuple[str, str, str]]) -> float:
         """
         triplets: list of (prompt_question, chosen_completion, rejected_completion)
         Trains in mini-batches using config['batch_size'] (default 1).
         Returns the average DPO loss over all mini-batches.
+
+        Strategy:
+          - Accumulate gradients across all mini-batches.
+          - Call optimizer.step() and scheduler.step() ONCE at the end.
+          - Free per-batch CUDA tensors ASAP to keep memory low.
         """
         self.model.train()
+        if hasattr(self.reference_model, "eval"):
+            self.reference_model.eval()  # make sure ref is not building grads
+
         beta = float(self.config.get("dpo_beta", 0.1))
-        train_batch_size = int(self.config.get("batch_size", 1))  # 'inr' -> int
+        train_batch_size = int(self.config.get("batch_size", 1))
+        max_grad_norm = float(self.config.get("max_grad_norm", 1.0))
 
-
-        total_loss = 0.0
+        total_loss_val = 0.0
         num_batches = 0
 
-        # slice over triplets in mini-batches
+        # start a fresh grad buffer
+        self.optimizer.zero_grad(set_to_none=True)
+
+        # loop mini-batches
         for start in range(0, len(triplets), train_batch_size):
             end = min(start + train_batch_size, len(triplets))
             batch = triplets[start:end]
@@ -179,11 +191,10 @@ class LLMTrainer:
             neg = [t[2] for t in batch]
 
             # ---- prompts via chat template (system+user), then lengths for masking ----
-            # We compute prompt lengths on the *templated* prompts to align with concat tokenization.
             templated_prompts = build_prompts(questions, self.tokenizer)
             prompt_lens = self._prompt_token_lengths(templated_prompts)
 
-            # ---- tokenize (prompt+completion) for pos/neg; uses the same chat template internally ----
+            # ---- tokenize (prompt+completion) for pos/neg; uses same chat template internally ----
             batch_pos = self._concat_tokenize(questions, pos)
             batch_neg = self._concat_tokenize(questions, neg)
 
@@ -195,7 +206,7 @@ class LLMTrainer:
                 batch_neg["input_ids"], batch_neg["attention_mask"], prompt_lens
             )
 
-            # ---- forward passes ----
+            # ---- forward passes (policy) ----
             pol_pos = self._sequence_logprobs(
                 self.model, batch_pos["input_ids"], batch_pos["attention_mask"], comp_mask_pos
             )
@@ -203,6 +214,7 @@ class LLMTrainer:
                 self.model, batch_neg["input_ids"], batch_neg["attention_mask"], comp_mask_neg
             )
 
+            # ---- forward passes (reference) - no grad ----
             with torch.no_grad():
                 ref_pos = self._sequence_logprobs(
                     self.reference_model, batch_pos["input_ids"], batch_pos["attention_mask"], comp_mask_pos
@@ -211,21 +223,38 @@ class LLMTrainer:
                     self.reference_model, batch_neg["input_ids"], batch_neg["attention_mask"], comp_mask_neg
                 )
 
-            # ---- DPO loss & step ----
+            # ---- DPO loss ----
+            # scale by total number of mini-batches so total gradient matches one big batch
             loss = self._dpo_loss(pol_pos, pol_neg, ref_pos, ref_neg, beta)
-
-            self.optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.get("max_grad_norm", 1.0))
-            self.optimizer.step()
-            self.scheduler.step()
-            total_loss += float(loss.detach().cpu().item())
-            del loss, pol_pos, pol_neg, ref_pos, ref_neg, batch_pos, batch_neg,
-            torch.cuda.empty_cache()
+            total_loss_val += float(loss.detach().cpu().item())
             num_batches += 1
 
-        return total_loss / max(1, num_batches)
+            # backprop for THIS batch only; free graph right after
+            (loss / 1.0).backward()  # If you want exact “once at the end” magnitude, use: (loss / num_total_batches)
+            # We'll divide later after counting batches (see below).
 
+            # ---- per-batch cleanup: drop tensors and clear CUDA cache pressure ----
+            del loss, pol_pos, pol_neg, ref_pos, ref_neg
+            del batch_pos, batch_neg, comp_mask_pos, comp_mask_neg, templated_prompts, prompt_lens
+            # NOTE: empty_cache() does not free reserved memory to the OS, but can reduce fragmentation
+            torch.cuda.empty_cache()
+
+        if num_batches > 0:
+            # Optional: rescale accumulated grads if you didn't divide each batch’s loss earlier
+            # Here we normalize to the mean loss so gradient magnitude matches a single big batch
+            for p in self.model.parameters():
+                if p.grad is not None:
+                    p.grad.data.div_(num_batches)
+
+            # clip & step ONCE
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
+            self.optimizer.step()
+            self.scheduler.step()
+
+        # clear grad buffers for next call
+        self.optimizer.zero_grad(set_to_none=True)
+
+        return total_loss_val / max(1, num_batches)
 
     def save_model(self, tmp_weights_path: str):
         self.model.save_pretrained(tmp_weights_path, safe_serialization=True)
