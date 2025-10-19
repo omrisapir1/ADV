@@ -55,7 +55,7 @@ train:
   num_steps: 100
 
 llm_trainer:
-  lr: 1e-5
+  lr: 1e-3
   weight_decay: 0.001
   dpo_beta: 0.9
   batch_size: 1
