@@ -219,42 +219,30 @@ class AceMathRewardModel:
         self.model.train()
         batch_size = self.pair_batch_size
         total_loss = 0.0
-        num_seen = 0
-        num_micro = (len(triplets) + batch_size - 1) // batch_size
+        num_batches = 0
+        accum_steps = self.grad_accum
         self.optimizer.zero_grad(set_to_none=True)
         for start in range(0, len(triplets), batch_size):
             end = min(start + batch_size, len(triplets))
             batch = triplets[start:end]
-
-            # ---- unpack ----
             batch_q = [t[0] for t in batch]
             batch_pos = [t[1] for t in batch]
             batch_neg = [t[2] for t in batch]
-
-            # ---- forward ----
-            # score_pairs should build the graph for the current micro-batch only
             r_pos, r_neg = self.score_pairs(batch_q, batch_pos, batch_neg, self.rm_config)
-
             loss_full = pairwise_rm_loss(r_pos, r_neg)
-            total_loss += float(loss_full.detach().item())
-            num_seen += 1
-
-            # ---- accumulate grads; free current graph ASAP ----
-            (loss_full / num_micro).backward()
-
-            # ---- drop CUDA tensors from this micro-batch ----
+            total_loss += loss_full.detach().item()
+            num_batches += 1
+            (loss_full / accum_steps).backward()
+            if num_batches % accum_steps == 0 or end == len(triplets):
+                if self.grad_clip is not None:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                self.optimizer.step()
+                self.scheduler.step()
+                self.optimizer.zero_grad(set_to_none=True)
             del r_pos, r_neg, loss_full, batch_q, batch_pos, batch_neg, batch
-            torch.cuda.empty_cache()
-
-        # ---- single optimizer step at the end ----
-        if self.grad_clip is not None:
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
-
-        self.optimizer.step()
-        self.scheduler.step()
-        self.optimizer.zero_grad(set_to_none=True)
-
-        return total_loss / num_seen if num_seen else 0.0
+        torch.cuda.empty_cache()
+        return total_loss / num_batches if num_batches else 0.0
+    
 
 
 def load_reward_model(model_name: str, gpu_id: int, rm_config: Optional[dict] = None, num_steps: Optional[int] = None) -> AceMathRewardModel:
