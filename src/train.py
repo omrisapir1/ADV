@@ -257,7 +257,7 @@ async def training_loop(config: Dict[str, Any]):
         # prompts = build_prompts(questions, tokenizer)
         # st = time.time()
         # raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
-        print(f"[Step {step}] Generation time: {time.time() - st:.2f}s")
+        # print(f"[Step {step}] Generation time: {time.time() - st:.2f}s")
 
         # if last_save_task is not None:
         #     await last_save_task  # wait for save completion
