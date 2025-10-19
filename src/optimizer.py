@@ -28,13 +28,11 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.op
         lr_val = optim_config.get("lr")
         betas_val = optim_config.get("betas")
         eps_val = optim_config.get("eps")
-        fused_val = optim_config.get("fused")
         optimizer = AdamW(
             param_groups,
             lr=float(lr_val),
             betas=betas_val,
             eps=float(eps_val),
-            fused=fused_val,
         )
     else:
         raise ValueError(f"Unsupported optimizer: {name_val}")

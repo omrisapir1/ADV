@@ -14,7 +14,6 @@ reward_model:
       - 0.9
       - 0.999
     eps: 1.0e-8
-    fused: false
     no_decay_modules: [ "LayerNorm", "bias" ]
   train:
     batch_size: 1
@@ -65,6 +64,7 @@ llm_trainer:
     name: adamw
     lr: 1e-5
     weight_decay: 0.001
+    eps: 1.0e-8
 
 
 tmp_weights_safetensors_path: /workspace/ADV/tmp_weights.safetenosrs
