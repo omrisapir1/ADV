@@ -276,10 +276,10 @@ async def training_loop(config: Dict[str, Any]):
         # if not questions:
         #     continue
 
-        candidates = questions_full["candidates"]
-        correctness_filtered_list = questions_full["correctness"]
-        questions = questions_full["question"]
-        gold_answers = questions_full["gold"]
+        candidates = [q["candidates"] for q in questions_full]
+        correctness_filtered_list = [q["correctness"] for q in questions_full]#questions_full["correctness"]
+        questions = [q["question"] for q in questions_full]#questions_full["correctness"]questions_full["question"]
+        gold_answers =  [q["gold"] for q in questions_full]#questions_full["correctness"]questions_full["question"]#questions_full["gold"]
 
 
         max_k = max((len(row) for row in candidates), default=0)
