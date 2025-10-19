@@ -61,6 +61,10 @@ llm_trainer:
   dpo_beta: 0.9
   batch_size: 1
   max_grad_norm: 1.0
+  optim:
+    name: adamw
+    lr: 1e-5
+    weight_decay: 0.001
 
 
 tmp_weights_safetensors_path: /workspace/ADV/tmp_weights.safetenosrs

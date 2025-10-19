@@ -7,12 +7,13 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from .optimizer import create_optimizer, create_scheduler
 from .prompting import build_prompts
 
 class LLMTrainer:
     """Lightweight LLM trainer scaffold with DPO train_step."""
 
-    def __init__(self, model_name: str, gpu_id: int, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, model_name: str, gpu_id: int, num_steps: int, config: Optional[Dict[str, Any]] = None):
         self.model_name = model_name
         self.config = config
         self.device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
@@ -55,8 +56,9 @@ class LLMTrainer:
 
         self.reference_model.config.pad_token_id = self.tokenizer.pad_token_id
 
-        self.optimizer = None
-        self.scheduler = None  # optional external scheduler; guard usage
+        self.optimizer = create_optimizer(self, config=config)
+        self.scheduler = create_scheduler(self.optimizer, self.rm_config, num_steps)
+        self.model.gradient_checkpointing_enable()
 
     @torch.no_grad()
     def _prompt_token_lengths(self, prompts: List[str]) -> List[int]:
@@ -153,12 +155,6 @@ class LLMTrainer:
         logits = beta * ((pol_pos - pol_neg) - (ref_pos - ref_neg))
         return -F.logsigmoid(logits).mean()
 
-    def _ensure_optimizer(self):
-        if self.optimizer is None:
-            lr = float(self.config.get("lr", 1e-5))
-            wd = float(self.config.get("weight_decay", 0.0))
-            self.optimizer = AdamW(self.model.parameters(), lr=lr, weight_decay=wd)
-
     def train_step(self, triplets: List[Tuple[str, str, str]]) -> float:
         """
         triplets: list of (prompt_question, chosen_completion, rejected_completion)
@@ -169,8 +165,6 @@ class LLMTrainer:
         beta = float(self.config.get("dpo_beta", 0.1))
         train_batch_size = int(self.config.get("batch_size", 1))  # 'inr' -> int
 
-        # lazily create optimizer once
-        self._ensure_optimizer()
 
         total_loss = 0.0
         num_batches = 0
@@ -237,5 +231,6 @@ class LLMTrainer:
         self.model.save_pretrained(tmp_weights_path, safe_serialization=True)
 
 
-def load_llm_trainer(model_name: str, gpu_id: int, config: Optional[Dict[str, Any]] = None) -> LLMTrainer:
-    return LLMTrainer(model_name, gpu_id, config)
+def load_llm_trainer(model_name: str, gpu_id: int, num_steps: int, config: Optional[Dict[str, Any]] = None) -> LLMTrainer:
+    return LLMTrainer(model_name, gpu_id, num_steps, config)
+

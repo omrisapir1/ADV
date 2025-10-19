@@ -236,7 +236,7 @@ async def training_loop(config: Dict[str, Any]):
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
     rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
-    llm_trainer = load_llm_trainer(llm_name, llm_gpu, llm_trainer_config)
+    llm_trainer = load_llm_trainer(llm_name, llm_gpu, num_steps, llm_trainer_config)
     engine = build_sglang_engine(llm_name, generation_config)
     dataset_obj, q_field, a_field = load_dataset_handle(config)
     ensure_empty_log_dir(LOG_DIR)
@@ -305,3 +305,4 @@ async def training_loop(config: Dict[str, Any]):
 def run(config_path: str):
     config = load_config(config_path)
     asyncio.run(training_loop(config))
+

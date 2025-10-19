@@ -53,7 +53,7 @@ class AceMathRewardModel:
         self.grad_clip = self.train_config.get("grad_clip")
         self.pair_batch_size = int(self.train_config.get("batch_size"))
         self.optimizer = create_optimizer(self, self.rm_config)
-        self.scheduler = create_scheduler(self.optimizer, self.rm_config, num_steps)
+        self.scheduler = create_scheduler(self.optimizer, num_steps)
         self.model.gradient_checkpointing_enable()
 
     def save_state(self, path: str):
