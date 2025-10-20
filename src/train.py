@@ -241,6 +241,7 @@ async def training_loop(config: Dict[str, Any]):
     llm_trainer = load_llm_trainer(llm_name, llm_gpu, num_steps, llm_trainer_config)
     engine = build_sglang_engine(llm_name, generation_config)
     train_ds, test_ds, q_field, a_field = load_dataset_handle(config)
+    await asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
     if evaluation_config:
         if evaluation_config.get('at_start'):
             eval_res = await run_full_evaluation(
