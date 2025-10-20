@@ -242,7 +242,6 @@ async def training_loop(config: Dict[str, Any]):
     engine = build_sglang_engine(llm_name, generation_config)
     train_ds, test_ds, q_field, a_field = load_dataset_handle(config)
     if evaluation_config:
-        #TODO eval with test_ds and evaluation_config
         if evaluation_config.get('at_start'):
             eval_res = await run_full_evaluation(
                 engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
@@ -253,8 +252,9 @@ async def training_loop(config: Dict[str, Any]):
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
     for step in range(num_steps):
+        if step <100:
+            continue
         if evaluation_config and step > 0 and step % evaluation_config['every_steps'] == 0:
-            # TODO eval with test_ds and evaluation_config
             eval_res = await run_full_evaluation(
                 engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
             )
