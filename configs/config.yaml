@@ -39,7 +39,7 @@ generation:
   think_top_p: 0.96
   think_top_k: 200
   think_repetition_penalty: 1.1
-  think_max_new_tokens: 1224
+  think_max_new_tokens: 1524
 
   # ---- Phase 2 (answer / greedy) ----
   answer_max_new_tokens: 500
@@ -61,7 +61,7 @@ llm_trainer:
   max_grad_norm: 1.0
   optim:
     name: adamw
-    lr: 3e-5
+    lr: 1e-5
     weight_decay: 0.001
     eps: 1.0e-8
     betas:
