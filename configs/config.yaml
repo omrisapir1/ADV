@@ -26,13 +26,12 @@ reward_model:
 
 
 dataset:
-  name: omrisap/300K-numina-math          # e.g. "your-username/your-math-dataset" or local path
+  name: omrisap/300K-numina-math-ds          # e.g. "your-username/your-math-dataset" or local path
   split: train
   field_question: problem
   field_answer: final_answer
 
 generation:
-  n_samples_per_problem: 124
   max_concurrency: 16
 
   # ---- Phase 1 (thinking) ----
@@ -52,6 +51,7 @@ hardware:
 
 train:
   batch_size: 24
+  n_samples_per_problem: 124
   num_steps: 100
 
 llm_trainer:
@@ -70,3 +70,8 @@ llm_trainer:
 
 
 tmp_weights_safetensors_path: /workspace/ADV/tmp_weights.safetenosrs
+
+evaluation:
+  at_start: true
+  every_steps: 25
+  n_samples_per_problem: 8

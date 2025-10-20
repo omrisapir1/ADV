@@ -13,6 +13,7 @@ from .generation import build_sglang_engine
 from .reward_model import load_reward_model
 from .answer_parse import compute_final_correctness
 from .llm_trainer import load_llm_trainer
+from .evaluation import run_full_evaluation  # added import
 
 import time
 
@@ -24,9 +25,8 @@ def load_config(path: str) -> Dict[str, Any]:
 def load_dataset_handle(cfg: Dict[str, Any]):
     ds_cfg = cfg.get("dataset", {})
     name = ds_cfg.get("name")
-    split = ds_cfg.get("split", "train")
-    ds = load_dataset(name, split=split)
-    return ds, ds_cfg.get("field_question", "problem"), ds_cfg.get("field_answer", "final_answer")
+    ds = load_dataset(name)
+    return ds['train'], ds['test'], ds_cfg.get("field_question", "problem"), ds_cfg.get("field_answer", "final_answer")
 
 def get_batch(dataset: List[str], batch_size: int, step: int) -> List[str]:
     start = (step * batch_size) % len(dataset)
@@ -226,29 +226,44 @@ async def training_loop(config: Dict[str, Any]):
     llm_name = config["model"]["llm_name"]
     rm_name = config["model"]["rm_name"]
     generation_config = config.get("generation")
-    n_samples = generation_config["n_samples_per_problem"]
+
     llm_gpu = config["hardware"].get("llm_gpu_id")
     rm_gpu = config["hardware"].get("rm_gpu_id")
     llm_trainer_config = config.get("llm_trainer")
     num_steps = config["train"]["num_steps"]
     batch_size = config["train"]["batch_size"]
+    n_samples = config["train"]["n_samples_per_problem"]
+    evaluation_config = config.get("evaluation")
     tmp_weights_path = config.get("tmp_weights_safetensors_path")  # path with potential typo kept as-is
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
     rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
     llm_trainer = load_llm_trainer(llm_name, llm_gpu, num_steps, llm_trainer_config)
     engine = build_sglang_engine(llm_name, generation_config)
-    dataset_obj, q_field, a_field = load_dataset_handle(config)
+    train_ds, test_ds, q_field, a_field = load_dataset_handle(config)
+    if evaluation_config:
+        #TODO eval with test_ds and evaluation_config
+        if evaluation_config.get('at_start'):
+            eval_res = await run_full_evaluation(
+                engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
+            )
+            print(f"[Eval@Start] {json.dumps(eval_res, indent=2)}")
     ensure_empty_log_dir(LOG_DIR)
 
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
     for step in range(num_steps):
+        if evaluation_config and step > 0 and step % evaluation_config['every_steps'] == 0:
+            # TODO eval with test_ds and evaluation_config
+            eval_res = await run_full_evaluation(
+                engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
+            )
+            print(f"[Eval@Step {step}] {json.dumps(eval_res, indent=2)}")
         # ---- HOT SWAP (beginning of iteration, except first) ----
         # Must ensure previous save finished before hot swap.
 
         # ---- Candidate Generation ----
-        records = get_batch_records(dataset_obj, batch_size, step)
+        records = get_batch_records(train_ds, batch_size, step)
         questions = [r[q_field] for r in records]
         gold_answers = [r[a_field] for r in records]
         prompts = build_prompts(questions, tokenizer)
@@ -312,4 +327,5 @@ async def training_loop(config: Dict[str, Any]):
 def run(config_path: str):
     config = load_config(config_path)
     asyncio.run(training_loop(config))
+
 
