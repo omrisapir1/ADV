@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 import torch
 from sklearn.metrics import roc_auc_score
@@ -11,7 +11,7 @@ from .prompting import build_prompts
 from .answer_parse import compute_final_correctness
 
 
-def _select_test_subset(test_ds, q_field: str, a_field: str, max_questions: int) -> (List[str], List[str]):
+def _select_test_subset(test_ds, q_field: str, a_field: str, max_questions: int) -> Tuple[List[str], List[str]]:
     total = len(test_ds)
     use_n = min(total, max_questions)
     records = [test_ds[i] for i in range(use_n)]
@@ -56,6 +56,15 @@ def _average_auc(rm_scores: torch.Tensor, correctness: List[List[int]]) -> float
     return sum(aucs) / len(aucs) if aucs else 0.0
 
 
+def _percent_ambiguous(correctness: List[List[int]]) -> float:
+    """Return percentage (0-100) of ambiguous (-1) correctness entries across all samples."""
+    total = sum(len(row) for row in correctness)
+    if total == 0:
+        return 0.0
+    ambiguous = sum(1 for row in correctness for v in row if v == -1)
+    return (ambiguous / total) * 100.0
+
+
 async def evaluate_greedy(engine, test_ds, q_field: str, a_field: str, tokenizer, generation_config: Dict[str, Any], evaluation_config: Dict[str, Any]) -> Dict[str, Any]:
     total = len(test_ds)
     questions = [test_ds[i][q_field] for i in range(total)]
@@ -72,10 +81,13 @@ async def evaluate_greedy(engine, test_ds, q_field: str, a_field: str, tokenizer
     candidate_texts = [[c[0] for c in row] for row in raw_candidates]
     correctness = compute_final_correctness(candidate_texts, gold_answers)
     acc = _per_question_accuracy(correctness)
+    amb_pct = _percent_ambiguous(correctness)
     return {
         'mode': 'greedy',
         'num_questions': len(questions),
-        'accuracy': acc
+        'accuracy': acc,
+        'percent_ambiguous': amb_pct,
+        'percent_minus_one': amb_pct
     }
 
 
@@ -98,12 +110,15 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
     torch.cuda.empty_cache()
     avg_acc = _per_question_accuracy(correctness)
     avg_auc = _average_auc(rm_scores, correctness)
+    amb_pct = _percent_ambiguous(correctness)
     return {
         'mode': 'sampling',
         'num_questions': len(questions),
         'n_samples_per_question': n_samples,
         'avg_accuracy': avg_acc,
-        'avg_auc': avg_auc
+        'avg_auc': avg_auc,
+        'percent_ambiguous': amb_pct,
+        'percent_minus_one': amb_pct
     }
 
 
