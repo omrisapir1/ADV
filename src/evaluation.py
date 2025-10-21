@@ -62,7 +62,7 @@ def _percent_ambiguous(correctness: List[List[int]]) -> float:
     if total == 0:
         return 0.0
     ambiguous = sum(1 for row in correctness for v in row if v == -1)
-    return (ambiguous / total) * 100.0
+    return (ambiguous / total)
 
 
 async def evaluate_greedy(engine, test_ds, q_field: str, a_field: str, tokenizer, generation_config: Dict[str, Any], evaluation_config: Dict[str, Any]) -> Dict[str, Any]:
@@ -86,7 +86,6 @@ async def evaluate_greedy(engine, test_ds, q_field: str, a_field: str, tokenizer
         'mode': 'greedy',
         'num_questions': len(questions),
         'accuracy': acc,
-        'percent_ambiguous': amb_pct,
         'percent_minus_one': amb_pct
     }
 
@@ -117,7 +116,6 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         'n_samples_per_question': n_samples,
         'avg_accuracy': avg_acc,
         'avg_auc': avg_auc,
-        'percent_ambiguous': amb_pct,
         'percent_minus_one': amb_pct
     }
 

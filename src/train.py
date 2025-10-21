@@ -252,8 +252,6 @@ async def training_loop(config: Dict[str, Any]):
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
     for step in range(num_steps):
-        if step <101:
-            continue
         if evaluation_config and step > 0 and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
                 engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
