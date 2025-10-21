@@ -175,7 +175,7 @@ class LLMTrainer:
         beta = float(self.config.get("dpo_beta", 0.1))
         train_batch_size = int(self.config.get("batch_size", 1))
         max_grad_norm = float(self.config.get("max_grad_norm", 1.0))
-
+        print(f'beta = {beta}, batch_size = {train_batch_size}, max_grad_norm = {max_grad_norm}')
         total_loss_val = 0.0
         num_batches = 0
 
