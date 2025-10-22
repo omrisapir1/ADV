@@ -93,30 +93,51 @@ async def evaluate_greedy(engine, test_ds, q_field: str, a_field: str, tokenizer
 async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: str, tokenizer, generation_config: Dict[str, Any], evaluation_config: Dict[str, Any], rm_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     n_samples = int(evaluation_config.get('n_samples_per_problem'))
     total = len(test_ds)
-    questions = [test_ds[i][q_field] for i in range(total)]
-    gold_answers = [test_ds[i][a_field] for i in range(total)]
-    prompts = build_prompts(questions, tokenizer)
-    raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
-    candidate_texts = [[c[0] for c in row] for row in raw_candidates]
-    correctness = compute_final_correctness(candidate_texts, gold_answers)
-    # Score with reward model
-    try:
-        rm_scores = rm_model.score_reference(questions, candidate_texts, rm_config)
-    except Exception as e:
-        print(f"[Eval Sampling] RM scoring exception: {e}; retry with smaller batch.")
+    batch_size = int(evaluation_config.get('sampling_batch_size', total))
+    if batch_size <= 0:
+        batch_size = total
+
+    all_questions: List[str] = []
+    all_gold_answers: List[str] = []
+    all_candidate_texts: List[List[str]] = []
+    rm_scores = torch.empty(total, n_samples, dtype=torch.float32).fill_(float('nan'))
+
+    for start in range(0, total, batch_size):
+        end = min(start + batch_size, total)
+        batch_questions = [test_ds[i][q_field] for i in range(start, end)]
+        batch_gold = [test_ds[i][a_field] for i in range(start, end)]
+        prompts = build_prompts(batch_questions, tokenizer)
+        raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
+        batch_candidate_texts = [[c[0] for c in row] for row in raw_candidates]
+        # Append
+        all_questions.extend(batch_questions)
+        all_gold_answers.extend(batch_gold)
+        all_candidate_texts.extend(batch_candidate_texts)
+        # Reward scoring per batch
+        try:
+            batch_rm_scores = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config)
+        except Exception as e:
+            print(f"[Eval Sampling] RM scoring exception on batch {start}:{end}: {e}; retry small batch.")
+            torch.cuda.empty_cache()
+            batch_rm_scores = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config, forced_small_batch_size=True)
         torch.cuda.empty_cache()
-        rm_scores = rm_model.score_reference(questions, candidate_texts, rm_config, forced_small_batch_size=True)
-    torch.cuda.empty_cache()
+        # Fill scores
+        b_rows, b_cols = batch_rm_scores.shape
+        rm_scores[start:start + b_rows, :b_cols] = batch_rm_scores.detach().to(dtype=torch.float32, device='cpu')
+        del batch_rm_scores, raw_candidates, batch_candidate_texts
+
+    correctness = compute_final_correctness(all_candidate_texts, all_gold_answers)
     avg_acc = _per_question_accuracy(correctness)
     avg_auc = _average_auc(rm_scores, correctness)
     amb_pct = _percent_ambiguous(correctness)
     return {
         'mode': 'sampling',
-        'num_questions': len(questions),
+        'num_questions': len(all_questions),
         'n_samples_per_question': n_samples,
         'avg_accuracy': avg_acc,
         'avg_auc': avg_auc,
-        'percent_minus_one': amb_pct
+        'percent_minus_one': amb_pct,
+        'sampling_batch_size': batch_size
     }
 
 

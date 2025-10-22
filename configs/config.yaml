@@ -75,3 +75,4 @@ evaluation:
   at_start: true
   every_steps: 100
   n_samples_per_problem: 124
+  sampling_batch_size: 24
