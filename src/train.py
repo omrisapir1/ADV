@@ -304,9 +304,9 @@ async def training_loop(config: Dict[str, Any]):
         # rm_avg_loss = rm_model.train_step(triplets)
         rm_avg_loss = 0
 
-        llm_avg_loss = llm_trainer.train_step(triplets)
+        # llm_avg_loss = llm_trainer.train_step(triplets)
 
-        print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
+        # print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
 
         log_questions(questions, gold_answers, candidates, rm_scores, correctness_filtered_list)
 
