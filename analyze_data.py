@@ -12,7 +12,7 @@ for cur_f in os.listdir(path):
     all_jsons.append(c_json)
 
 df = pd.DataFrame(all_jsons)
-df = df.explode('questions')
+
 
 def roc_auc(r):
     y_true, y_pred = [], []
@@ -21,7 +21,8 @@ def roc_auc(r):
         y_pred.append(s)
     return roc_auc_score(y_true, y_pred)
 
-df['roc_auc'] = df.apply(roc_auc, axis=1)
+# df = df.explode('questions')
+# df['roc_auc'] = df.apply(roc_auc, axis=1)
 
 
 
@@ -70,6 +71,7 @@ def select_candidates(entry: Dict[str, Any]) -> Dict[str, Any]:
 path ='/workspace/ADV/evaluation_logs/'
 res = []
 for cur_f in os.listdir(path):
+    if '.json' not in cur_f: continue
     d = json.load(open(path + cur_f,'r'))
     if d['mode'] == 'greedy':
         res.append([d['accuracy'], d['percent_minus_one']])
