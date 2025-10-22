@@ -273,7 +273,7 @@ async def training_loop(config: Dict[str, Any]):
             await last_save_task  # wait for save completion
             last_save_task = None
             # hot-swap freshly saved weights before new generation
-            # last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
+            last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
 
 
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
@@ -304,9 +304,9 @@ async def training_loop(config: Dict[str, Any]):
         # rm_avg_loss = rm_model.train_step(triplets)
         rm_avg_loss = 0
 
-        # llm_avg_loss = llm_trainer.train_step(triplets)
+        llm_avg_loss = llm_trainer.train_step(triplets)
 
-        # print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
+        print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
 
         log_questions(questions, gold_answers, candidates, rm_scores, correctness_filtered_list)
 

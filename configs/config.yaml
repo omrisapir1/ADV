@@ -56,12 +56,12 @@ train:
 
 llm_trainer:
   weight_decay: 0.001
-  dpo_beta: 0.1
+  dpo_beta: 0.9
   batch_size: 1
   max_grad_norm: 1.0
   optim:
     name: adamw
-    lr: 1e-6
+    lr: 1e-5
     weight_decay: 0.001
     eps: 1.0e-8
     betas:
