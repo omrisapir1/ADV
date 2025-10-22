@@ -56,7 +56,7 @@ train:
 
 llm_trainer:
   weight_decay: 0.001
-  dpo_beta: 0.9
+  dpo_beta: 0.1
   batch_size: 1
   max_grad_norm: 1.0
   optim:
