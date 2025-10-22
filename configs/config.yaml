@@ -61,7 +61,7 @@ llm_trainer:
   max_grad_norm: 1.0
   optim:
     name: adamw
-    lr: 1e-5
+    lr: 1e-6
     weight_decay: 0.001
     eps: 1.0e-8
     betas:
@@ -74,5 +74,5 @@ tmp_weights_safetensors_path: /workspace/ADV/tmp_weights.safetenosrs
 evaluation:
   at_start: true
   every_steps: 100
-  n_samples_per_problem: 124
+  n_samples_per_problem: 8
   sampling_batch_size: 24
