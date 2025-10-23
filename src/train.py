@@ -147,7 +147,7 @@ def choose_pos_neg_triplets(
         incorrect_ids = [j for j, v in enumerate(row_flags) if v == 0]
         if not correct_ids or not incorrect_ids:
             continue
-        pos_j = min(correct_ids, key=lambda j: scores_row[j])
+        pos_j = max(correct_ids, key=lambda j: scores_row[j])
         neg_j = max(incorrect_ids, key=lambda j: scores_row[j])
         triplets.append((q, cand_list[pos_j], cand_list[neg_j]))
     return triplets
