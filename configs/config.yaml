@@ -47,7 +47,8 @@ generation:
 
 hardware:
   llm_gpu_id: 0
-  rm_gpu_id: 0
+  rm_gpu_id: 1
+  llm_trainer_gpu_id: 1
 
 train:
   batch_size: 32
@@ -75,4 +76,4 @@ evaluation:
   at_start: false
   every_steps: 100
   n_samples_per_problem: 8
-  sampling_batch_size: 24
+  sampling_batch_size: 96

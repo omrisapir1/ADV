@@ -229,6 +229,7 @@ async def training_loop(config: Dict[str, Any]):
 
     llm_gpu = config["hardware"].get("llm_gpu_id")
     rm_gpu = config["hardware"].get("rm_gpu_id")
+    llm_trainer__gpu = config["hardware"].get("llm_trainer_gpu_id")
     llm_trainer_config = config.get("llm_trainer")
     num_steps = config["train"]["num_steps"]
     batch_size = config["train"]["batch_size"]
@@ -241,7 +242,7 @@ async def training_loop(config: Dict[str, Any]):
     engine = build_sglang_engine(llm_name, generation_config)
 
     rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
-    llm_trainer = load_llm_trainer(llm_name, llm_gpu, num_steps, llm_trainer_config)
+    llm_trainer = load_llm_trainer(llm_name, llm_trainer__gpu, num_steps, llm_trainer_config)
     if evaluation_config:
         if evaluation_config.get('at_start'):
             eval_res = await run_full_evaluation(
