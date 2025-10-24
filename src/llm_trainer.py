@@ -214,10 +214,8 @@ class LLMTrainer:
             pol_neg = self._sequence_logprobs(
                 self.model, batch_neg["input_ids"], batch_neg["attention_mask"], comp_mask_neg
             )
-            print(templated_prompts)
-            print(self.tokenizer.decode(batch_pos["input_ids"][0]))
-            print(self.tokenizer.decode(batch_neg["input_ids"][0]))
-            
+
+
 
             # ---- forward passes (reference) - no grad ----
             with torch.no_grad():
@@ -238,15 +236,6 @@ class LLMTrainer:
             (loss / 1.0).backward()  # If you want exact “once at the end” magnitude, use: (loss / num_total_batches)
             # We'll divide later after counting batches (see below).
 
-            # ---- per-batch cleanup: drop tensors and clear CUDA cache pressure ----
-            del loss, pol_pos, pol_neg, ref_pos, ref_neg
-            del batch_pos, batch_neg, comp_mask_pos, comp_mask_neg, templated_prompts, prompt_lens
-            # NOTE: empty_cache() does not free reserved memory to the OS, but can reduce fragmentation
-            torch.cuda.empty_cache()
-
-        if num_batches > 0:
-            # Optional: rescale accumulated grads if you didn't divide each batch’s loss earlier
-            # Here we normalize to the mean loss so gradient magnitude matches a single big batch
             for p in self.model.parameters():
                 if p.grad is not None:
                     p.grad.data.div_(num_batches)
@@ -255,9 +244,11 @@ class LLMTrainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
             self.optimizer.step()
             self.scheduler.step()
-
-        # clear grad buffers for next call
-        self.optimizer.zero_grad(set_to_none=True)
+            self.optimizer.zero_grad(set_to_none=True)
+            del loss, pol_pos, pol_neg, ref_pos, ref_neg
+            del batch_pos, batch_neg, comp_mask_pos, comp_mask_neg, templated_prompts, prompt_lens
+            # NOTE: empty_cache() does not free reserved memory to the OS, but can reduce fragmentation
+            torch.cuda.empty_cache()
 
         return total_loss_val / max(1, num_batches)
 
