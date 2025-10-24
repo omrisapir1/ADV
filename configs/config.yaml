@@ -1,5 +1,5 @@
 model:
-  llm_name: Qwen/Qwen2.5-Math-1.5B-Instruct
+  llm_name: omrisap/Qwen2.5-Math-1.5B-5K-SFT-think
   rm_name: nvidia/AceMath-7B-RM
 
 reward_model:
