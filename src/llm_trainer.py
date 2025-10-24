@@ -89,7 +89,7 @@ class LLMTrainer:
             truncation=True,
             return_tensors="pt",
         )
-        return {k: v.to(self.device) for k, v in batch.items()}
+        return {k: v for k, v in batch.items()}
 
 
     def _build_completion_mask(
@@ -209,10 +209,10 @@ class LLMTrainer:
 
             # ---- forward passes (policy) ----
             pol_pos = self._sequence_logprobs(
-                self.model, batch_pos["input_ids"], batch_pos["attention_mask"], comp_mask_pos
+                self.model, (batch_pos["input_ids"]).to(self.model.device), (batch_pos["attention_mask"]).to(self.model.device), comp_mask_pos.to(self.model.device)
             )
             pol_neg = self._sequence_logprobs(
-                self.model, batch_neg["input_ids"], batch_neg["attention_mask"], comp_mask_neg
+                self.model, (batch_neg["input_ids"]).to(self.model.device), (batch_neg["attention_mask"]).to(self.model.device), comp_mask_neg.to(self.model.device)
             )
 
 
@@ -220,10 +220,10 @@ class LLMTrainer:
             # ---- forward passes (reference) - no grad ----
             with torch.no_grad():
                 ref_pos = self._sequence_logprobs(
-                    self.reference_model, batch_pos["input_ids"], batch_pos["attention_mask"], comp_mask_pos
+                    self.reference_model, (batch_pos["input_ids"]).to(self.reference_model.device), (batch_pos["attention_mask"]).to(self.reference_model.device), comp_mask_pos.to(self.reference_model.device)
                 ).to(self.device)
                 ref_neg = self._sequence_logprobs(
-                    self.reference_model, batch_neg["input_ids"], batch_neg["attention_mask"], comp_mask_neg
+                    self.reference_model, (batch_neg["input_ids"]).to(self.reference_model.device), (batch_neg["attention_mask"]).to(self.reference_model.device), comp_mask_neg.to(self.reference_model.device)
                 ).to(self.device)
 
             # ---- DPO loss ----
