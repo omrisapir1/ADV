@@ -214,6 +214,9 @@ class LLMTrainer:
             pol_neg = self._sequence_logprobs(
                 self.model, batch_neg["input_ids"], batch_neg["attention_mask"], comp_mask_neg
             )
+            print(templated_prompts)
+            print(self.tokenizer.decode(batch_pos["input_ids"][0]))
+            print(self.tokenizer.decode(batch_pos["input_ids"][0]))
 
             # ---- forward passes (reference) - no grad ----
             with torch.no_grad():
