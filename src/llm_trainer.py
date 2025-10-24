@@ -16,7 +16,7 @@ class LLMTrainer:
     def __init__(self, model_name: str, gpu_id: int, num_steps: int, config: Optional[Dict[str, Any]] = None):
         self.model_name = model_name
         self.config = config
-        self.device = f"cuda:{1}" if torch.cuda.is_available() else "cpu"
+        self.device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
 
         # Tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
