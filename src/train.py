@@ -304,7 +304,11 @@ async def training_loop(config: Dict[str, Any]):
         triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
         if not triplets:
             continue
-        rm_avg_loss = rm_model.train_step(triplets)
+        try:
+            rm_avg_loss = rm_model.train_step(triplets)
+        except Exception as e:
+            print(f"[Step {step}] Exception during RM training: {e} will skip")
+            rm_avg_loss = 0.0
 
         llm_avg_loss = llm_trainer.train_step(triplets)
 
