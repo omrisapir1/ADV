@@ -50,7 +50,7 @@ class LLMTrainer:
             trust_remote_code=True,
             low_cpu_mem_usage=True,
             attn_implementation="sdpa",
-        ).to(self.device)
+        ).to(f"cuda:{0}")
         for p in self.reference_model.parameters():
             p.requires_grad_(False)
 
@@ -221,10 +221,10 @@ class LLMTrainer:
             with torch.no_grad():
                 ref_pos = self._sequence_logprobs(
                     self.reference_model, batch_pos["input_ids"], batch_pos["attention_mask"], comp_mask_pos
-                )
+                ).to(self.device)
                 ref_neg = self._sequence_logprobs(
                     self.reference_model, batch_neg["input_ids"], batch_neg["attention_mask"], comp_mask_neg
-                )
+                ).to(self.device)
 
             # ---- DPO loss ----
             # scale by total number of mini-batches so total gradient matches one big batch
