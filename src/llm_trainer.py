@@ -217,7 +217,7 @@ class LLMTrainer:
             print(templated_prompts)
             print(self.tokenizer.decode(batch_pos["input_ids"][0]))
             print(self.tokenizer.decode(batch_neg["input_ids"][0]))
-            raise
+            
 
             # ---- forward passes (reference) - no grad ----
             with torch.no_grad():
