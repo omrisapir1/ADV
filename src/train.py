@@ -46,7 +46,7 @@ def get_batch_records(dataset_obj, batch_size: int, step: int) -> List[Dict[str,
 
 LOG_DIR = "/workspace/ADV/src/data"  # central log directory path
 
-def log_questions(questions: List[str], gold_answers: List[str], candidates: List[List[str]], rm_scores: torch.Tensor, correctness: List[List[int]]):
+def log_questions(questions: List[str], gold_answers: List[str], candidates: List[List[str]], rm_scores: torch.Tensor, correctness: List[List[int]], rm_avg_loss, llm_avg_loss):
     """Log training results to disk in JSON format.
 
     Ensures all tensor / non-serializable types are converted to native Python types.
@@ -107,7 +107,9 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
             "correctness": corr_list,
             "num_candidates": len(candidates[i]) if i < len(candidates) else 0,
             "avg_rm_score": float(sum(question_rm_scores) / len(question_rm_scores)) if question_rm_scores else 0.0,
-            "correct_count": correct_count
+            "correct_count": correct_count,
+            'rm_avg_loss':rm_avg_loss,
+            'llm_avg_loss': llm_avg_loss
         }
 
         # Skip serialization error printing; silently ignore failures
@@ -315,7 +317,7 @@ async def training_loop(config: Dict[str, Any]):
 
         print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
 
-        log_questions(questions, gold_answers, candidates, rm_scores, correctness_filtered_list)
+        log_questions(questions, gold_answers, candidates, rm_scores, correctness_filtered_list, rm_avg_loss, llm_avg_loss)
 
         # ---- ASYNC SAVE (end of iteration) ----
         # Before starting new save ensure earlier hot swap is done (we awaited it already above before generation).
