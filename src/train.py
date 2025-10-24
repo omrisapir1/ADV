@@ -132,12 +132,13 @@ def choose_pos_neg_triplets(
     candidates: List[List[str]],
     correctness: Any,  # can be List[List[int]] or torch.Tensor
     rm_scores: torch.Tensor,
-) -> List[Tuple[str, str, str]]:
+) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str, str, str]]]:
     """Return triplets (question, pos_solution, neg_solution) selecting hardest pos (lowest score among correct)
     and hardest neg (highest score among incorrect) for each question with mixed correctness.
     Accepts correctness as list-of-lists or padded tensor.
     """
     triplets: List[Tuple[str, str, str]] = []
+    triplets_for_rm: List[Tuple[str, str, str]] = []
     is_tensor = isinstance(correctness, torch.Tensor)
     for qi, (q, cand_list) in enumerate(zip(questions, candidates)):
         if is_tensor:
@@ -151,8 +152,10 @@ def choose_pos_neg_triplets(
             continue
         pos_j = max(correct_ids, key=lambda j: scores_row[j])
         neg_j = max(incorrect_ids, key=lambda j: scores_row[j])
+        pos_j_r = max(correct_ids, key=lambda j: scores_row[j])
         triplets.append((q, cand_list[pos_j], cand_list[neg_j]))
-    return triplets
+        triplets_for_rm.append((q, cand_list[pos_j_r], cand_list[neg_j]))
+    return triplets, triplets_for_rm
 
 
 def ensure_empty_log_dir(path: str):
@@ -304,11 +307,11 @@ async def training_loop(config: Dict[str, Any]):
             rm_scores = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
         print(f"[Step {step}] RM Scoring time: {time.time() - st:.2f}s")
         torch.cuda.empty_cache()
-        triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
+        triplets, triplets_for_rm = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
         if not triplets:
             continue
         try:
-            rm_avg_loss = rm_model.train_step(triplets)
+            rm_avg_loss = rm_model.train_step(triplets_for_rm)
         except Exception as e:
             print(f"[Step {step}] Exception during RM training: {e} will skip")
             rm_avg_loss = 0.0
