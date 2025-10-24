@@ -237,16 +237,19 @@ async def training_loop(config: Dict[str, Any]):
     tmp_weights_path = config.get("tmp_weights_safetensors_path")  # path with potential typo kept as-is
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
+    train_ds, test_ds, q_field, a_field = load_dataset_handle(config)
+    engine = build_sglang_engine(llm_name, generation_config)
+
     rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
     llm_trainer = load_llm_trainer(llm_name, llm_gpu, num_steps, llm_trainer_config)
-    engine = build_sglang_engine(llm_name, generation_config)
-    train_ds, test_ds, q_field, a_field = load_dataset_handle(config)
     if evaluation_config:
         if evaluation_config.get('at_start'):
             eval_res = await run_full_evaluation(
                 engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
             )
             print(f"[Eval@Start] {json.dumps(eval_res, indent=2)}")
+
+
     ensure_empty_log_dir(LOG_DIR)
 
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
