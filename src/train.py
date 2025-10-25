@@ -16,10 +16,6 @@ from .llm_trainer import load_llm_trainer
 from .evaluation import run_full_evaluation  # added import
 
 import time
-import signal
-import subprocess
-import psutil
-
 
 def load_config(path: str) -> Dict[str, Any]:
     with open(path, "r") as f:
@@ -218,56 +214,6 @@ def filter_and_select_mixed(
     correctness_f = [filtered_correctness[i] for i in mixed_indices]
     return questions_f, gold_answers_f, candidates_f, correctness_f
 
-async def kill_sglang(proc, timeout=10):
-    """Try graceful SIGINT, then force kill if needed."""
-    if proc.poll() is not None:
-        print("🔹 Already stopped.")
-        return True
-
-    print("🧹 Sending SIGINT (graceful shutdown)...")
-    proc.send_signal(signal.SIGINT)
-
-    try:
-        proc.wait(timeout=timeout)
-        print("✅ Graceful shutdown succeeded.")
-        return True
-    except subprocess.TimeoutExpired:
-        print(f"⚠️ Graceful shutdown timed out ({timeout}s). Forcing kill...")
-        try:
-            # Kill entire process tree (covers child workers, too)
-            p = psutil.Process(proc.pid)
-            for child in p.children(recursive=True):
-                child.kill()
-            p.kill()
-            proc.wait(3)
-            print("💀 Force-killed successfully.")
-        except Exception as e:
-            print(f"❌ Force-kill failed: {e}")
-        return False
-
-
-async def launch_sglang(tmp_weights_path=None, last_kill_task=None):
-    cmd = [
-        "python3", "-m", "sglang.launch_server",
-        "--model", "omrisap/Qwen2.5-Math-1.5B-5K-SFT-think" if not tmp_weights_path else tmp_weights_path,
-        "--host", "0.0.0.0",
-        "--port", "30000",
-        "--dtype", "bfloat16",
-        "--mem-fraction-static", "0.25",
-        "--tp", "1"
-    ]
-    if last_kill_task:
-        await last_kill_task
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT
-    )
-
-    # Optional: wait until the server starts responding
-
-    return proc
-
 
 async def _async_save_model(trainer, path: str):
     """Run model.save_pretrained in a thread to avoid blocking event loop."""
@@ -311,13 +257,10 @@ async def training_loop(config: Dict[str, Any]):
 
 
     # ensure_empty_log_dir(LOG_DIR)
-    proc = await asyncio.create_task(launch_sglang())
-    time.sleep(10)
+
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
     for step in range(num_steps):
-        if step < 91:
-            continue
         if evaluation_config and step > 0 and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
                 engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
@@ -335,16 +278,11 @@ async def training_loop(config: Dict[str, Any]):
         raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
         print(f"[Step {step}] Generation time: {time.time() - st:.2f}s")
 
-
         if last_save_task is not None:
             await last_save_task  # wait for save completion
-            if last_swap_task is not None:
-                await last_swap_task
             last_save_task = None
-            last_kill_task = asyncio.create_task(kill_sglang(proc))
-
-            last_swap_task = asyncio.create_task(launch_sglang(tmp_weights_path, last_kill_task))
-            # last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
+            # hot-swap freshly saved weights before new generation
+            last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
 
 
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
@@ -395,8 +333,10 @@ async def training_loop(config: Dict[str, Any]):
         last_save_task = asyncio.create_task(_async_save_model(llm_trainer, tmp_weights_path))
 
     # Final wait to ensure last save completes.
+    return engine , prompts, n_samples, generation_config
     if last_save_task is not None:
         await last_save_task
+
 
 
 def run(config_path: str):

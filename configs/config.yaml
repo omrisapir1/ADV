@@ -53,7 +53,7 @@ hardware:
 train:
   batch_size: 24
   n_samples_per_problem: 124
-  num_steps: 5000
+  num_steps: 1
 
 llm_trainer:
   weight_decay: 0.001
@@ -73,7 +73,7 @@ llm_trainer:
 tmp_weights_safetensors_path: /workspace/ADV/tmp_weights.safetenosrs
 
 evaluation:
-  at_start: false
+  at_start: true
   every_steps: 100
   n_samples_per_problem: 8
   sampling_batch_size: 24
