@@ -24,6 +24,15 @@ def roc_auc(r):
 # df = df.explode('questions')
 # df['roc_auc'] = df.apply(roc_auc, axis=1)
 
+df['questions'].apply(lambda x: np.mean([np.mean(i['correctness']) for i in x])).mean()
+
+
+
+
+
+
+
+
 
 
 from typing import Dict, Any

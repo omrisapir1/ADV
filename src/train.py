@@ -256,11 +256,13 @@ async def training_loop(config: Dict[str, Any]):
             print(f"[Eval@Start] {json.dumps(eval_res, indent=2)}")
 
 
-    ensure_empty_log_dir(LOG_DIR)
+    # ensure_empty_log_dir(LOG_DIR)
 
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
     for step in range(num_steps):
+        if step < 91:
+            continue
         if evaluation_config and step > 0 and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
                 engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
@@ -315,8 +317,11 @@ async def training_loop(config: Dict[str, Any]):
         except Exception as e:
             print(f"[Step {step}] Exception during RM training: {e} will skip")
             rm_avg_loss = 0.0
-
-        llm_avg_loss = llm_trainer.train_step(triplets)
+        try:
+            llm_avg_loss = llm_trainer.train_step(triplets)
+        except Exception as e:
+            print(f"[Step {step}] Exception during LLM training: {e} will skip")
+            llm_avg_loss = 0.0
 
         print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
 
