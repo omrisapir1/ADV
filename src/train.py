@@ -312,6 +312,7 @@ async def training_loop(config: Dict[str, Any]):
 
     # ensure_empty_log_dir(LOG_DIR)
     proc = await asyncio.create_task(launch_sglang())
+    time.sleep(10)
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
     for step in range(num_steps):
