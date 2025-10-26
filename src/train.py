@@ -289,10 +289,8 @@ async def training_loop(config: Dict[str, Any]):
             last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
         if step>0:
             last_half_batch = await last_half_batch
-            print(f'len(last_half_batch) = {len(last_half_batch)}')
-            print(f'len(raw_candidates) = {len(raw_candidates)}')
             raw_candidates.extend(last_half_batch)
-            print(f'after len(raw_candidates) = {len(raw_candidates)}')
+
 
         last_half_batch = asyncio.create_task(
             engine.generate_candidates(prompts[int(batch_size / 2):], n_samples=n_samples, **generation_config))
