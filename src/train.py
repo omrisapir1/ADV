@@ -292,6 +292,7 @@ async def training_loop(config: Dict[str, Any]):
             engine.generate_candidates(prompts[int(batch_size / 2):], n_samples=n_samples, **generation_config))
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
         candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
+        print(f'len(candidate_texts)= {len(candidate_texts)} len(gold_answers)= {len(gold_answers)}')
         correctness = compute_final_correctness(candidate_texts, gold_answers)
 
         questions, gold_answers, candidates, correctness_filtered_list = filter_and_select_mixed(
