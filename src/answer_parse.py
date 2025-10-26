@@ -85,6 +85,7 @@ def compute_final_correctness(candidates: List[List[str]], gold_answers: List[st
         row_flags: List[int] = []
         for cand_raw in row:
             cand_ans, can_only_be_zero = extract_final_answer(cand_raw)
+
             row_flags.append(math_equal(cand_ans, g, can_only_be_zero))
         out.append(row_flags)
     return out

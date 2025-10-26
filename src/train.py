@@ -16,6 +16,7 @@ from .llm_trainer import load_llm_trainer
 from .evaluation import run_full_evaluation  # added import
 
 import time
+import re
 
 def load_config(path: str) -> Dict[str, Any]:
     with open(path, "r") as f:
@@ -213,6 +214,23 @@ def filter_and_select_mixed(
     return questions_f, gold_answers_f, candidates_f, correctness_f
 
 
+def clean_end_candidates(candidates: List[List[str]]):
+    pattern = re.compile(r"\\boxed\s*\{(.*?)\}", flags=re.DOTALL)
+
+
+    for row in candidates:
+        for c in row:
+            matches = list(pattern.finditer(c))
+            if not matches:
+                continue
+            last_match = matches[-1]
+            print(f'Orginal answer: {c}')
+            print(f'End answer: {c[:last_match.span()[1]]}')
+            row[row.index(c)] = c[:last_match.span()[1]]
+
+
+
+
 async def _async_save_model(trainer, path: str):
     """Run model.save_pretrained in a thread to avoid blocking event loop."""
     loop = asyncio.get_running_loop()
@@ -222,6 +240,9 @@ async def _async_hot_swap(engine, path: str):
     """Invoke engine.hot_swap off the event loop (blocking requests.post)."""
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, engine.hot_swap, path)
+
+
+
 
 
 async def training_loop(config: Dict[str, Any]):
@@ -297,7 +318,7 @@ async def training_loop(config: Dict[str, Any]):
             correctness_tensor[qi, :len(row)] = torch.tensor(row, dtype=torch.int32)
         st = time.time()
 
-
+        candidates = clean_end_candidates(candidates)
 
         try:
             rm_scores = rm_model.score_reference(questions, candidates, rm_config)
@@ -308,15 +329,7 @@ async def training_loop(config: Dict[str, Any]):
         print(f"[Step {step}] RM Scoring time: {time.time() - st:.2f}s")
         torch.cuda.empty_cache()
         triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
-        print(triplets)
-        import re
-        pattern = re.compile(r"\\boxed\s*\{(.*?)\}", flags=re.DOTALL)
-        matches = list(pattern.finditer(triplets[0][2]))
-        end = matches[-1].span()
-        print(triplets[0][2][:end[1]])
-        print()
-        print(triplets[0][2][:end[1]])
-        raise Exception
+
 
 
         if not triplets:
