@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import random
-import os
 from typing import List, Dict, Any, Optional, Tuple
 import requests
 from openai import AsyncOpenAI
@@ -68,31 +67,81 @@ class AsyncSGLangEngineWrapper:
             return results
         payload_extra_2 = {"top_k": 0, "repetition_penalty": 1.0}
         async def _greedy(ctx: str):
-            try:
-                return await self.client.completions.create(
-                    model=self.model_name,
-                    prompt=ctx,
-                    n=1,
-                    temperature=0.0,
-                    top_p=1.0,
-                    max_tokens=answer_max_new_tokens,
-                    stop=answer_stop if answer_stop else None,
-                    extra_body=payload_extra_2,
-                )
-            except :
-                print('Proba;y reached time out will re-try in 10 seconds')
-                await asyncio.sleep(10)
-                return await self.client.completions.create(
-                    model=self.model_name,
-                    prompt=ctx,
-                    n=1,
-                    temperature=0.0,
-                    top_p=1.0,
-                    max_tokens=answer_max_new_tokens,
-                    stop=answer_stop if answer_stop else None,
-                )
+            """Greedy second-phase completion with overall 2 min deadline and retries."""
+            max_total_seconds = 120.0
+            per_attempt_timeout = 30.0  # cap per attempt
+            max_attempts = 5
+            base_backoff = 5.0
+            deadline = asyncio.get_event_loop().time() + max_total_seconds
+            attempt = 1
+            while attempt <= max_attempts:
+                now = asyncio.get_event_loop().time()
+                remaining = deadline - now
+                if remaining <= 0:
+                    print(f"[greedy] Global deadline exceeded for ctx (attempt {attempt}). Skipping.")
+                    class _Dummy:
+                        choices: list = []
+                    return _Dummy()
+                attempt_timeout = min(per_attempt_timeout, remaining)
+                try:
+                    async with self._semaphore:
+                        resp = await asyncio.wait_for(
+                            self.client.completions.create(
+                                model=self.model_name,
+                                prompt=ctx,
+                                n=1,
+                                temperature=0.0,
+                                top_p=1.0,
+                                max_tokens=answer_max_new_tokens,
+                                stop=answer_stop if answer_stop else None,
+                                extra_body=payload_extra_2,
+                            ),
+                            timeout=attempt_timeout,
+                        )
+                    return resp
+                except asyncio.TimeoutError:
+                    print(f"[greedy] Attempt {attempt} timed out after {attempt_timeout:.1f}s")
+                except (RateLimitError, APIStatusError) as e:
+                    print(f"[greedy] Attempt {attempt} API error: {type(e).__name__}: {e}")
+                except asyncio.CancelledError:
+                    # Propagate cancellations
+                    raise
+                except Exception as e:
+                    print(f"[greedy] Attempt {attempt} unexpected error: {e}")
+                # Prepare next attempt
+                attempt += 1
+                if attempt > max_attempts:
+                    break
+                backoff = min(base_backoff * (2 ** (attempt - 2)) + random.uniform(0, 1), remaining)
+                # If backoff exceeds remaining time, abort early
+                if asyncio.get_event_loop().time() + backoff > deadline:
+                    print("[greedy] Not enough time left for another attempt; aborting.")
+                    break
+                await asyncio.sleep(backoff)
+            print(f"[greedy] Exhausted attempts for ctx; returning empty dummy response.")
+            class _Dummy:
+                choices: list = []
+            return _Dummy()
         tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx in phase2_items]
-        resp2_list = await asyncio.gather(*tasks)
+        try:
+            resp2_list = await asyncio.wait_for(asyncio.gather(*tasks), timeout=130.0)  # 2min + buffer
+        except asyncio.TimeoutError:
+            print("[phase2] Global 2-min timeout reached; cancelling unfinished tasks.")
+            resp2_list = []
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            for t in tasks:
+                try:
+                    r = await t
+                except asyncio.CancelledError:
+                    class _Dummy: choices: list = []
+                    r = _Dummy()
+                except Exception as e:
+                    print(f"[phase2] Task error after cancel: {e}")
+                    class _Dummy: choices: list = []
+                    r = _Dummy()
+                resp2_list.append(r)
         for (idx, think_clean, _), resp2 in zip(phase2_items, resp2_list):
             answer_text = (resp2.choices[0].text or "") if resp2.choices else ""
             full_text = think_clean + THINK_STOP + answer_text

@@ -20,7 +20,7 @@ class LLMTrainer:
 
         # Tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
+            "/workspace/ADV/tmp_weights.safetenosrs",
             use_fast=True,
             trust_remote_code=True,
         )
