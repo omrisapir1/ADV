@@ -260,7 +260,7 @@ async def training_loop(config: Dict[str, Any]):
 
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
-    last_half_batch: Optional[asyncio.Task] = None
+    last_half_batch_tash: Optional[asyncio.Task] = None
     for step in range(num_steps):
         if evaluation_config and step > 0 and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
@@ -288,13 +288,15 @@ async def training_loop(config: Dict[str, Any]):
             # hot-swap freshly saved weights before new generation
             last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
         if step>0:
-            await last_half_batch
+
+            await last_half_batch_tash
+            last_half_batch = asyncio.gather(last_half_batch_tash)
             print(f'len(last_half_batch) = {len(last_half_batch)}')
             print(f'len(raw_candidates) = {len(raw_candidates)}')
             raw_candidates.extend(last_half_batch)
             print(f'after len(raw_candidates) = {len(raw_candidates)}')
 
-        last_half_batch = asyncio.create_task(
+        last_half_batch_tash = asyncio.create_task(
             engine.generate_candidates(prompts[int(batch_size / 2):], n_samples=n_samples, **generation_config))
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
         candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
