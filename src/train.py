@@ -256,7 +256,7 @@ async def training_loop(config: Dict[str, Any]):
             print(f"[Eval@Start] {json.dumps(eval_res, indent=2)}")
 
 
-    # ensure_empty_log_dir(LOG_DIR)
+    ensure_empty_log_dir(LOG_DIR)
 
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
@@ -275,7 +275,7 @@ async def training_loop(config: Dict[str, Any]):
         gold_answers = [r[a_field] for r in records]
         prompts = build_prompts(questions, tokenizer)
         st = time.time()
-        if step == 0:
+        if step <999999:#== 0:
             raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
         else:
             raw_candidates = await engine.generate_candidates(prompts[:int(batch_size / 2)], n_samples=n_samples, **generation_config)
@@ -287,13 +287,13 @@ async def training_loop(config: Dict[str, Any]):
             last_save_task = None
             # hot-swap freshly saved weights before new generation
             last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
-        if step>0:
-            last_half_batch = await last_half_batch
-            raw_candidates.extend(last_half_batch)
-
-
-        last_half_batch = asyncio.create_task(
-            engine.generate_candidates(prompts[int(batch_size / 2):], n_samples=n_samples, **generation_config))
+        # if step>0:
+        #     last_half_batch = await last_half_batch
+        #     raw_candidates.extend(last_half_batch)
+        #
+        #
+        # last_half_batch = asyncio.create_task(
+        #     engine.generate_candidates(prompts[int(batch_size / 2):], n_samples=n_samples, **generation_config))
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
         candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers)
