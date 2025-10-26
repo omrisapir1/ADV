@@ -288,7 +288,6 @@ async def training_loop(config: Dict[str, Any]):
             # hot-swap freshly saved weights before new generation
             last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
         if step>0:
-
             await last_half_batch_tash
             last_half_batch = asyncio.gather(last_half_batch_tash)
             print(f'len(last_half_batch) = {len(last_half_batch)}')
