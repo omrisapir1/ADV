@@ -51,7 +51,7 @@ hardware:
   llm_trainer_gpu_id: 1
 
 train:
-  batch_size: 1
+  batch_size: 24
   n_samples_per_problem: 124
   num_steps: 10000
 
