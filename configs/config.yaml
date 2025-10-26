@@ -56,7 +56,7 @@ train:
   num_steps: 10000
 
 llm_trainer:
-  update_ref_model_every: 50
+  update_ref_model_every: 100
   weight_decay: 0.001
   dpo_beta: 0.1
   batch_size: 1
@@ -77,4 +77,4 @@ evaluation:
   at_start: false
   every_steps: 100
   n_samples_per_problem: 8
-  sampling_batch_size: 32
+  sampling_batch_size: 24
