@@ -224,9 +224,7 @@ def clean_end_candidates(candidates: List[List[str]]):
             if not matches:
                 continue
             last_match = matches[-1]
-            print(f'Orginal answer: {c}')
-            print(f'End answer: {c[:last_match.span()[1]]}')
-            row[row.index(c)] = c[:last_match.span()[1]]
+            row[row.index(c)] = c[:last_match.span()[1] + 2]
 
 
 
@@ -318,7 +316,7 @@ async def training_loop(config: Dict[str, Any]):
             correctness_tensor[qi, :len(row)] = torch.tensor(row, dtype=torch.int32)
         st = time.time()
 
-        candidates = clean_end_candidates(candidates)
+        clean_end_candidates(candidates)
 
         try:
             rm_scores = rm_model.score_reference(questions, candidates, rm_config)
