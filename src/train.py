@@ -267,6 +267,8 @@ async def training_loop(config: Dict[str, Any]):
                 engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
             )
             print(f"[Eval@Step {step}] {json.dumps(eval_res, indent=2)}")
+        if llm_trainer_config['update_ref_model_every'] % step == 0:
+            llm_trainer.update_ref_model()
 
         records = get_batch_records(train_ds, batch_size, step)
         questions = [r[q_field] for r in records]
@@ -287,12 +289,15 @@ async def training_loop(config: Dict[str, Any]):
             last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
         if step>0:
             await last_half_batch
+            print(f'len(last_half_batch) = {len(last_half_batch)}')
+            print(f'len(raw_candidates) = {len(raw_candidates)}')
             raw_candidates.extend(last_half_batch)
+            print(f'after len(raw_candidates) = {len(raw_candidates)}')
+
         last_half_batch = asyncio.create_task(
             engine.generate_candidates(prompts[int(batch_size / 2):], n_samples=n_samples, **generation_config))
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
         candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
-        print(f'len(candidate_texts)= {len(candidate_texts)} len(gold_answers)= {len(gold_answers)}')
         correctness = compute_final_correctness(candidate_texts, gold_answers)
 
         questions, gold_answers, candidates, correctness_filtered_list = filter_and_select_mixed(

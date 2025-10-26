@@ -255,6 +255,10 @@ class LLMTrainer:
     def save_model(self, tmp_weights_path: str):
         self.model.save_pretrained(tmp_weights_path, safe_serialization=True)
 
+    def update_ref_model(self):
+        self.reference_model.load_state_dict(self.model.state_dict())
+        print('updated reference model')
+
 
 def load_llm_trainer(model_name: str, gpu_id: int, num_steps: int, config: Optional[Dict[str, Any]] = None) -> LLMTrainer:
     return LLMTrainer(model_name, gpu_id, num_steps, config)
