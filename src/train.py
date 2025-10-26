@@ -285,7 +285,7 @@ async def training_loop(config: Dict[str, Any]):
             last_save_task = None
             # hot-swap freshly saved weights before new generation
             last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
-        if last_half_batch:
+        if step>0:
             await last_half_batch
             raw_candidates.extend(last_half_batch)
         last_half_batch = asyncio.create_task(
