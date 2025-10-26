@@ -62,7 +62,7 @@ llm_trainer:
   max_grad_norm: 1.0
   optim:
     name: adamw
-    lr: 3e-6
+    lr: 3e-5
     weight_decay: 0.001
     eps: 1.0e-8
     betas:
@@ -76,4 +76,4 @@ evaluation:
   at_start: false
   every_steps: 100
   n_samples_per_problem: 8
-  sampling_batch_size: 24
+  sampling_batch_size: 32

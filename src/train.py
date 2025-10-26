@@ -150,9 +150,9 @@ def choose_pos_neg_triplets(
         incorrect_ids = [j for j, v in enumerate(row_flags) if v == 0]
         if not correct_ids or not incorrect_ids:
             continue
-        pos_j = max(correct_ids, key=lambda j: scores_row[j])
+        pos_j = min(correct_ids, key=lambda j: scores_row[j])
         neg_j = max(incorrect_ids, key=lambda j: scores_row[j])
-        pos_j_r = max(correct_ids, key=lambda j: scores_row[j])
+        pos_j_r = min(correct_ids, key=lambda j: scores_row[j])
         triplets.append((q, cand_list[pos_j], cand_list[neg_j]))
         triplets_for_rm.append((q, cand_list[pos_j_r], cand_list[neg_j]))
     return triplets, triplets_for_rm
@@ -260,22 +260,24 @@ async def training_loop(config: Dict[str, Any]):
 
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
+    last_half_batch: Optional[asyncio.Task] = None
     for step in range(num_steps):
         if evaluation_config and step > 0 and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
                 engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
             )
             print(f"[Eval@Step {step}] {json.dumps(eval_res, indent=2)}")
-        # ---- HOT SWAP (beginning of iteration, except first) ----
-        # Must ensure previous save finished before hot swap.
 
-        # ---- Candidate Generation ----
         records = get_batch_records(train_ds, batch_size, step)
         questions = [r[q_field] for r in records]
         gold_answers = [r[a_field] for r in records]
         prompts = build_prompts(questions, tokenizer)
         st = time.time()
-        raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
+        if step == 0:
+            raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
+        else:
+            raw_candidates = await engine.generate_candidates(prompts[:int(batch_size / 2)], n_samples=n_samples, **generation_config)
+
         print(f"[Step {step}] Generation time: {time.time() - st:.2f}s")
 
         if last_save_task is not None:
@@ -283,8 +285,11 @@ async def training_loop(config: Dict[str, Any]):
             last_save_task = None
             # hot-swap freshly saved weights before new generation
             last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
-
-
+        if last_half_batch:
+            await last_half_batch
+            raw_candidates.extend(last_half_batch)
+        last_half_batch = asyncio.create_task(
+            engine.generate_candidates(prompts[int(batch_size / 2):], n_samples=n_samples, **generation_config))
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
         candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers)
@@ -299,6 +304,9 @@ async def training_loop(config: Dict[str, Any]):
         for qi, row in enumerate(correctness_filtered_list):
             correctness_tensor[qi, :len(row)] = torch.tensor(row, dtype=torch.int32)
         st = time.time()
+
+
+
         try:
             rm_scores = rm_model.score_reference(questions, candidates, rm_config)
         except Exception as e:
@@ -333,10 +341,8 @@ async def training_loop(config: Dict[str, Any]):
         last_save_task = asyncio.create_task(_async_save_model(llm_trainer, tmp_weights_path))
 
     # Final wait to ensure last save completes.
-    return engine , prompts, n_samples, generation_config
     if last_save_task is not None:
         await last_save_task
-
 
 
 def run(config_path: str):
