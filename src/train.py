@@ -138,7 +138,6 @@ def choose_pos_neg_triplets(
     Accepts correctness as list-of-lists or padded tensor.
     """
     triplets: List[Tuple[str, str, str]] = []
-    triplets_for_rm: List[Tuple[str, str, str]] = []
     is_tensor = isinstance(correctness, torch.Tensor)
     for qi, (q, cand_list) in enumerate(zip(questions, candidates)):
         if is_tensor:
@@ -152,10 +151,9 @@ def choose_pos_neg_triplets(
             continue
         pos_j = min(correct_ids, key=lambda j: scores_row[j])
         neg_j = max(incorrect_ids, key=lambda j: scores_row[j])
-        pos_j_r = min(correct_ids, key=lambda j: scores_row[j])
+
         triplets.append((q, cand_list[pos_j], cand_list[neg_j]))
-        triplets_for_rm.append((q, cand_list[pos_j_r], cand_list[neg_j]))
-    return triplets, triplets_for_rm
+    return triplets
 
 
 def ensure_empty_log_dir(path: str):
@@ -309,11 +307,22 @@ async def training_loop(config: Dict[str, Any]):
             rm_scores = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
         print(f"[Step {step}] RM Scoring time: {time.time() - st:.2f}s")
         torch.cuda.empty_cache()
-        triplets, triplets_for_rm = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
+        triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
+        print(triplets)
+        import re
+        pattern = re.compile(r"\\boxed\s*\{(.*?)\}", flags=re.DOTALL)
+        matches = list(pattern.finditer(triplets[0][2]))
+        end = matches[-1].span()
+        print(triplets[0][2][:end[1]])
+        print()
+        print(triplets[0][2][:end[1]])
+        raise Exception
+
+
         if not triplets:
             continue
         try:
-            rm_avg_loss = rm_model.train_step(triplets_for_rm)
+            rm_avg_loss = rm_model.train_step(triplets)
         except Exception as e:
             print(f"[Step {step}] Exception during RM training: {e} will skip")
             rm_avg_loss = 0.0
