@@ -216,14 +216,19 @@ class LLMTrainer:
 
 
 
-            # ---- forward passes (reference) - no grad ----
-            with torch.no_grad():
-                ref_pos = self._sequence_logprobs(
-                    self.reference_model, (batch_pos["input_ids"]).to(self.reference_model.device), (batch_pos["attention_mask"]).to(self.reference_model.device), comp_mask_pos.to(self.reference_model.device)
-                ).to(self.device)
-                ref_neg = self._sequence_logprobs(
-                    self.reference_model, (batch_neg["input_ids"]).to(self.reference_model.device), (batch_neg["attention_mask"]).to(self.reference_model.device), comp_mask_neg.to(self.reference_model.device)
-                ).to(self.device)
+            # ---- forward passes (reference) - no grad ---
+            try:
+                with torch.no_grad():
+                    ref_pos = self._sequence_logprobs(
+                        self.reference_model, (batch_pos["input_ids"]).to(self.reference_model.device), (batch_pos["attention_mask"]).to(self.reference_model.device), comp_mask_pos.to(self.reference_model.device)
+                    ).to(self.device)
+                    ref_neg = self._sequence_logprobs(
+                        self.reference_model, (batch_neg["input_ids"]).to(self.reference_model.device), (batch_neg["attention_mask"]).to(self.reference_model.device), comp_mask_neg.to(self.reference_model.device)
+                    ).to(self.device)
+            except RuntimeError as e:
+                print(f"Reference model exception: {e} will skip this batch.")
+                torch.cuda.empty_cache()
+                continue
 
             # ---- DPO loss ----
             # scale by total number of mini-batches so total gradient matches one big batch
