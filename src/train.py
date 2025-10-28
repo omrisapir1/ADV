@@ -17,6 +17,7 @@ from .evaluation import run_full_evaluation  # added import
 
 import time
 import re
+import requests
 
 def load_config(path: str) -> Dict[str, Any]:
     with open(path, "r") as f:
@@ -294,7 +295,9 @@ async def training_loop(config: Dict[str, Any]):
 
         raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
         print(f"[Step {step}] Generation time: {time.time() - st:.2f}s")
+        url = f"http://localhost:30000/flush_cache"
 
+        response = requests.post(url)
         if last_save_task is not None:
             await last_save_task  # wait for save completion
             last_save_task = None
