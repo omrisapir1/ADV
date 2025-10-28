@@ -58,7 +58,7 @@ train:
 
 
 llm_trainer:
-  update_ref_model_every: 100
+  update_ref_model_every: 1000
   weight_decay: 0.001
   dpo_beta: 0.1
   batch_size: 1
