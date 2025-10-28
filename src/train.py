@@ -134,12 +134,14 @@ def choose_pos_neg_triplets(
     candidates: List[List[str]],
     correctness: Any,  # can be List[List[int]] or torch.Tensor
     rm_scores: torch.Tensor,
+    explore_bool: bool = True,
 ) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str, str, str]]]:
     """Return triplets (question, pos_solution, neg_solution) selecting hardest pos (lowest score among correct)
     and hardest neg (highest score among incorrect) for each question with mixed correctness.
     Accepts correctness as list-of-lists or padded tensor.
     """
-    triplets: List[Tuple[str, str, str]] = []
+    triplets_for_rm: List[Tuple[str, str, str]] = []
+    triplets_for_llm: List[Tuple[str, str, str]] = []
     is_tensor = isinstance(correctness, torch.Tensor)
     for qi, (q, cand_list) in enumerate(zip(questions, candidates)):
         if is_tensor:
@@ -154,8 +156,13 @@ def choose_pos_neg_triplets(
         pos_j = min(correct_ids, key=lambda j: scores_row[j])
         neg_j = max(incorrect_ids, key=lambda j: scores_row[j])
 
-        triplets.append((q, cand_list[pos_j], cand_list[neg_j]))
-    return triplets
+        triplets_for_rm.append((q, cand_list[pos_j], cand_list[neg_j]))
+        if explore_bool:
+            triplets_for_llm.append((q, cand_list[pos_j], cand_list[neg_j]))
+        else:
+            pos_j = max(correct_ids, key=lambda j: scores_row[j])
+            triplets_for_llm.append((q, cand_list[pos_j], cand_list[neg_j]))
+    return triplets_for_rm, triplets_for_llm
 
 
 def ensure_empty_log_dir(path: str):
@@ -253,8 +260,10 @@ async def training_loop(config: Dict[str, Any]):
     llm_gpu = config["hardware"].get("llm_gpu_id")
     rm_gpu = config["hardware"].get("rm_gpu_id")
     llm_trainer__gpu = config["hardware"].get("llm_trainer_gpu_id")
+
     llm_trainer_config = config.get("llm_trainer")
     num_steps = config["train"]["num_steps"]
+    flip_exploit_every_steps = config["train"].get("explore_exploit_flip_every_steps")
     batch_size = config["train"]["batch_size"]
     n_samples = config["train"]["n_samples_per_problem"]
     evaluation_config = config.get("evaluation")
@@ -278,7 +287,13 @@ async def training_loop(config: Dict[str, Any]):
 
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
+    explore_bool = True
     for step in range(num_steps):
+        if step % flip_exploit_every_steps == 0 and step > 0:
+            explore_bool = not explore_bool
+
+        if step % llm_trainer_config['update_ref_model_every'] == 0:
+            llm_trainer.update_ref_model()
         if evaluation_config and step > 0 and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
                 engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
@@ -329,19 +344,19 @@ async def training_loop(config: Dict[str, Any]):
             rm_scores = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
         print(f"[Step {step}] RM Scoring time: {time.time() - st:.2f}s")
         torch.cuda.empty_cache()
-        triplets = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores)
+        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores, explore_bool)
 
 
 
-        if not triplets:
+        if not triplets_for_rm:
             continue
         try:
-            rm_avg_loss = rm_model.train_step(triplets)
+            rm_avg_loss = rm_model.train_step(triplets_for_rm)
         except Exception as e:
             print(f"[Step {step}] Exception during RM training: {e} will skip")
             rm_avg_loss = 0.0
         try:
-            llm_avg_loss = llm_trainer.train_step(triplets)
+            llm_avg_loss = llm_trainer.train_step(triplets_for_llm)
         except Exception as e:
             print(f"[Step {step}] Exception during LLM training: {e} will skip")
             llm_avg_loss = 0.0
