@@ -35,7 +35,7 @@ class LLMTrainer:
 
         # Primary (trainable) model
         self.model = AutoModelForCausalLM.from_pretrained(
-            "/workspace/ADV/tmp_weights.safetenosrs",
+            model_name,
             torch_dtype=dtype,
             trust_remote_code=True,
             low_cpu_mem_usage=True,
