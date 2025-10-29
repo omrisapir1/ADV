@@ -346,7 +346,9 @@ async def training_loop(config: Dict[str, Any]):
         print(f"[Step {step}] RM Scoring time: {time.time() - st:.2f}s")
         torch.cuda.empty_cache()
         triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores, explore_bool)
-
+        print(triplets_for_rm[0])
+        print('-------')
+        print(triplets_for_llm[0])
 
 
         if not triplets_for_rm:
