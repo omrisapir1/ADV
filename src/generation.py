@@ -113,21 +113,32 @@ class AsyncSGLangEngineWrapper:
         think_max_new_tokens = gen_cfg.get("think_max_new_tokens")
         answer_max_new_tokens = gen_cfg.get("answer_max_new_tokens")
         answer_stop = gen_cfg.get("answer_stop")
-        tasks = [
-            asyncio.create_task(
-                self._two_phase_for_one_prompt(
-                    p,
-                    n_samples=n_samples,
-                    think_temperature=think_temperature,
-                    think_top_p=think_top_p,
-                    think_max_new_tokens=think_max_new_tokens,
-                    think_top_k=think_top_k,
-                    think_repetition_penalty=think_repetition_penalty,
-                    answer_max_new_tokens=answer_max_new_tokens,
-                    answer_stop=answer_stop,
-                )
-            ) for p in prompts
-        ]
+        TIMEOUT_SEC = gen_cfg.get("timeout", 60)
+        tasks = []
+        for p in prompts:
+            coro = self._two_phase_for_one_prompt(
+                p,
+                n_samples=n_samples,
+                think_temperature=think_temperature,
+                think_top_p=think_top_p,
+                think_max_new_tokens=think_max_new_tokens,
+                think_top_k=think_top_k,
+                think_repetition_penalty=think_repetition_penalty,
+                answer_max_new_tokens=answer_max_new_tokens,
+                answer_stop=answer_stop,
+            )
+
+            async def run_with_timeout(coro=coro, prompt=p):
+                try:
+                    return await asyncio.wait_for(coro, timeout=TIMEOUT_SEC)
+                except asyncio.TimeoutError:
+                    print(f"⏱️ Timeout for prompt: {prompt[:60]!r} — skipping")
+                    return []  # empty result list to keep structure consistent
+                except Exception as e:
+                    print(f"⚠️ Error on prompt {prompt[:60]!r}: {e}")
+                    return []
+
+            tasks.append(asyncio.create_task(run_with_timeout()))
         return await asyncio.gather(*tasks)
 
 
