@@ -300,8 +300,6 @@ async def training_loop(config: Dict[str, Any]):
                 engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
             )
             print(f"[Eval@Step {step}] {json.dumps(eval_res, indent=2)}")
-        if step % llm_trainer_config['update_ref_model_every'] == 0:
-            llm_trainer.update_ref_model()
 
         records = get_batch_records(train_ds, batch_size, step)
         questions = [r[q_field] for r in records]
