@@ -293,7 +293,7 @@ async def training_loop(config: Dict[str, Any]):
             explore_bool = not explore_bool
             print(f'Fliped to: {explore_bool} at step {step}')
 
-        if step % llm_trainer_config['update_ref_model_every'] == 0:
+        if step % llm_trainer_config['update_ref_model_every'] == 0 and step > 0:
             llm_trainer.update_ref_model()
         if evaluation_config and step > 0 and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
@@ -344,9 +344,6 @@ async def training_loop(config: Dict[str, Any]):
         print(f"[Step {step}] RM Scoring time: {time.time() - st:.2f}s")
         torch.cuda.empty_cache()
         triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores, explore_bool)
-        print(triplets_for_rm[0])
-        print('-------')
-        print(triplets_for_llm[0])
 
 
         if not triplets_for_rm:
