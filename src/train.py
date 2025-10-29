@@ -291,6 +291,7 @@ async def training_loop(config: Dict[str, Any]):
     for step in range(num_steps):
         if step % flip_exploit_every_steps == 0 and step > 0:
             explore_bool = not explore_bool
+            print(f'Fliped to: {explore_bool} at step {step}')
 
         if step % llm_trainer_config['update_ref_model_every'] == 0:
             llm_trainer.update_ref_model()
