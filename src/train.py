@@ -275,6 +275,7 @@ async def training_loop(config: Dict[str, Any]):
 
     rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
     llm_trainer = load_llm_trainer(llm_name, llm_trainer__gpu, num_steps, llm_trainer_config)
+    last_swap_task = await asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
     if evaluation_config:
         if evaluation_config.get('at_start'):
             eval_res = await run_full_evaluation(
