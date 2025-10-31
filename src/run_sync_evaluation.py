@@ -34,7 +34,7 @@ def prepare_generation_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
 def main():
     parser = argparse.ArgumentParser(description='Run synchronous evaluation (serial) using sync engine.')
     parser.add_argument('--config', default='configs/config.yaml', help='Path to YAML config.')
-    parser.add_argument('--max-questions', type=int, default=8, help='Limit number of questions for quick eval.')
+    parser.add_argument('--max-questions', type=int, default=500, help='Limit number of questions for quick eval.')
     parser.add_argument('--output', default='sync_eval_result.json', help='Path to write combined result json.')
     args = parser.parse_args()
 
