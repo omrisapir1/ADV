@@ -4,8 +4,13 @@ from typing import List, Tuple, Optional
 import os
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
-from .optimizer import create_optimizer, create_scheduler
-from .losses import pairwise_rm_loss
+
+try:
+    from .optimizer import create_optimizer, create_scheduler
+    from .losses import pairwise_rm_loss
+except:
+    from .optimizer import create_optimizer, create_scheduler
+    from .losses import pairwise_rm_loss
 
 
 class AceMathRewardModel:
