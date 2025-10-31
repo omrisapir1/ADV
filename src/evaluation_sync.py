@@ -13,10 +13,14 @@ try:
 except Exception:  # pragma: no cover
     def roc_auc_score(*_args, **_kwargs):  # type: ignore
         return 0.0
-
-from .prompting import build_prompts
-from .answer_parse import compute_final_correctness
-from .evaluation import merge_eval_results, log_evaluation  # reuse existing helpers
+try:
+    from .prompting import build_prompts
+    from .answer_parse import compute_final_correctness
+    from .evaluation import merge_eval_results, log_evaluation  # reuse existing helpers
+except:
+    from prompting import build_prompts
+    from answer_parse import compute_final_correctness
+    from evaluation import merge_eval_results, log_evaluation  # reuse existing helpers
 
 # --- Utility helpers duplicated (kept private) to avoid relying on async versions ---
 
