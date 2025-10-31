@@ -9,8 +9,8 @@ try:
     from .optimizer import create_optimizer, create_scheduler
     from .losses import pairwise_rm_loss
 except:
-    from .optimizer import create_optimizer, create_scheduler
-    from .losses import pairwise_rm_loss
+    from optimizer import create_optimizer, create_scheduler
+    from losses import pairwise_rm_loss
 
 
 class AceMathRewardModel:
