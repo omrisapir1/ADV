@@ -7,8 +7,12 @@ from typing import List, Dict, Any, Optional, Tuple
 import torch
 from sklearn.metrics import roc_auc_score
 
-from .prompting import build_prompts
-from .answer_parse import compute_final_correctness
+try:
+    from .prompting import build_prompts
+    from .answer_parse import compute_final_correctness
+except:
+    from prompting import build_prompts
+    from answer_parse import compute_final_correctness
 
 
 def _select_test_subset(test_ds, q_field: str, a_field: str, max_questions: int) -> Tuple[List[str], List[str]]:
