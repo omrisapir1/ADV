@@ -49,7 +49,8 @@ def main():
 
     # Load dataset
     ds_name = cfg['dataset']['name']
-    split = cfg['dataset']['split']
+    # split = cfg['dataset']['split']
+    split = 'test'
     print(f'Loading dataset {ds_name} split {split} ...')
     dataset = load_dataset(ds_name, split=split)
     if args.max_questions > 0:
