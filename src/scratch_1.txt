@@ -6,3 +6,4 @@ python3 -m sglang.launch_server   --model omrisap/Qwen2.5-Math-1.5B-5K-SFT-think
   --max-running-requests 8296
   --disable-cuda-graph \
 
+??--max-prefill-tokens 64000
