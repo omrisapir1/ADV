@@ -20,6 +20,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import torch
 import torch.nn.functional as F
 import pandas as pd
+import asyncio
 
 # Absolute imports (repo root on PYTHONPATH); friendlier for notebook copy-paste
 from src.train import load_config, load_dataset_handle, get_batch_records
@@ -35,6 +36,7 @@ class EntropyAnalysisConfig:
     batch_size: int = 2         # questions per batch
     save_csv_path: str = "token_entropy_analysis.csv"
     device: Optional[str] = None  # override device for HF model
+    n_samples_override: Optional[int] = None  # optionally override config train.n_samples_per_problem
 
 # ---------------------------------------------------------------------------
 @torch.no_grad()
@@ -142,24 +144,20 @@ def compute_hf_raw_entropies_for_think_text(think_text: str, prompt: str, tokeni
     return mean_entropy, entropies, len(gen_ids)
 
 # ---------------------------------------------------------------------------
-def run_entropy_analysis(cfg: EntropyAnalysisConfig):
+async def run_entropy_analysis_async(cfg: EntropyAnalysisConfig) -> pd.DataFrame:
+    """Async version safe for Jupyter (call with `await`). Returns DataFrame."""
     base_cfg = load_config(cfg.config_yaml_path)
     llm_name = base_cfg["model"]["llm_name"]
     generation_cfg = base_cfg.get("generation", {})
-    n_samples_per_problem = base_cfg.get("train", {}).get("n_samples_per_problem", 1)
+    n_samples_per_problem = cfg.n_samples_override or base_cfg.get("train", {}).get("n_samples_per_problem", 1)
 
-    # Dataset
     train_ds, _test_ds, q_field, _a_field = load_dataset_handle(base_cfg)
-
-    # HF model via trainer (reuse tokenizer & weights)
     trainer = load_llm_trainer(llm_name, base_cfg["hardware"].get("llm_trainer_gpu_id", 0), 0, base_cfg.get("llm_trainer"))
     model = trainer.model
     tokenizer = trainer.tokenizer
     if cfg.device:
         model.to(cfg.device)
     model.eval()
-
-    # SGLang engine for actual generation of think phase (one sample each)
     engine = build_sglang_engine(llm_name, generation_cfg)
 
     rows: List[Dict[str, Any]] = []
@@ -169,19 +167,8 @@ def run_entropy_analysis(cfg: EntropyAnalysisConfig):
         questions = [r[q_field] for r in batch_records]
         prompts = build_prompts(questions, tokenizer)
 
-        # Use same generation signature as train.py (multiple samples per problem)
-        raw_candidates_nested = None
-        try:
-            import asyncio
-            raw_candidates_nested = asyncio.run(engine.generate_candidates(prompts, n_samples=n_samples_per_problem, **generation_cfg))
-        except RuntimeError:
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            raw_candidates_nested = loop.run_until_complete(engine.generate_candidates(prompts, n_samples=n_samples_per_problem, **generation_cfg))
-            loop.close()
+        raw_candidates_nested = await engine.generate_candidates(prompts, n_samples=n_samples_per_problem, **generation_cfg)
 
-        # Iterate per question and per sample
         for q_idx, (q, prompt, cand_list) in enumerate(zip(questions, prompts, raw_candidates_nested)):
             if not cand_list:
                 rows.append({
@@ -199,11 +186,9 @@ def run_entropy_analysis(cfg: EntropyAnalysisConfig):
                 total += 1
                 continue
             for sample_idx, candidate in enumerate(cand_list):
-                # candidate structure: (full_text, phase_flag, top_logprobs_sequence)
                 try:
                     full_text, phase_flag, top_lp_seq = candidate
                 except Exception:
-                    # Backward compatibility fallback
                     full_text = candidate[0]
                     phase_flag = candidate[1] if len(candidate) > 1 else 0
                     top_lp_seq = []
@@ -234,7 +219,35 @@ def run_entropy_analysis(cfg: EntropyAnalysisConfig):
         print(f"[Batch {batch_idx}] Processed {len(questions)} questions with {n_samples_per_problem} samples each. Total rows: {total}")
 
     df = pd.DataFrame(rows)
+    print("\n=== Entropy Analysis Result ===")
+    print(df.head(len(rows)))
+    df.to_csv(cfg.save_csv_path, index=False)
+    print(f"Saved CSV to: {cfg.save_csv_path}")
     return df
+
+# Synchronous wrapper for non-notebook contexts
+def run_entropy_analysis(cfg: EntropyAnalysisConfig) -> Optional[pd.DataFrame]:
+    """Run analysis synchronously.
+    In Jupyter (already running event loop) will try nest_asyncio; if unavailable, instruct user to use:
+        df = await run_entropy_analysis_async(cfg)
+    Returns DataFrame or None if cannot run synchronously.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        if loop.is_running():
+            # Jupyter or existing loop
+            try:
+                import nest_asyncio  # type: ignore
+                nest_asyncio.apply()
+                return loop.run_until_complete(run_entropy_analysis_async(cfg))
+            except ImportError:
+                print("nest_asyncio not installed. In notebook use: df = await run_entropy_analysis_async(cfg)")
+                return None
+    except RuntimeError:
+        # No running loop -> safe to use asyncio.run
+        return asyncio.run(run_entropy_analysis_async(cfg))
+    # Fallback if something unexpected
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -52,7 +52,7 @@ class AsyncSGLangEngineWrapper:
             top_p=think_top_p,
             max_tokens=think_max_new_tokens,
             stop=[THINK_STOP],
-            logprobs=logprobs_k,
+            top_logprobs=logprobs_k,
             extra_body=payload_extra_1,
         )
         # Initialize results: (text, flag, top_logprobs_seq)
@@ -89,7 +89,7 @@ class AsyncSGLangEngineWrapper:
                     top_p=1.0,
                     max_tokens=answer_max_new_tokens,
                     stop=answer_stop if answer_stop else None,
-                    logprobs=0,  # No need for answer phase logprobs
+                    # logprobs=0,  # No need for answer phase logprobs
                     extra_body=payload_extra_2,
                 )
             except:
@@ -103,7 +103,7 @@ class AsyncSGLangEngineWrapper:
                     top_p=1.0,
                     max_tokens=answer_max_new_tokens,
                     stop=answer_stop if answer_stop else None,
-                    logprobs=0,
+                    # logprobs=0,
                 )
         tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx, _ in phase2_items]
         resp2_list = await asyncio.gather(*tasks)
