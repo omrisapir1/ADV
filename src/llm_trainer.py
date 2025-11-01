@@ -16,7 +16,7 @@ class LLMTrainer:
     def __init__(self, model_name: str, gpu_id: int, num_steps: int, config: Optional[Dict[str, Any]] = None):
         self.model_name = model_name
         self.config = config
-        self.device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
+        self.device = f"cuda:{0}" if torch.cuda.is_available() else "cpu"
 
         # Tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -44,21 +44,21 @@ class LLMTrainer:
 
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
 
-        self.reference_model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=dtype,
-            trust_remote_code=True,
-            low_cpu_mem_usage=True,
-            attn_implementation="sdpa",
-        ).to(f"cuda:{0}")
-        for p in self.reference_model.parameters():
-            p.requires_grad_(False)
-
-        self.reference_model.config.pad_token_id = self.tokenizer.pad_token_id
-
-        self.optimizer = create_optimizer(self, config=config)
-        self.scheduler = create_scheduler(self.optimizer, num_steps)
-        self.model.gradient_checkpointing_enable()
+        # self.reference_model = AutoModelForCausalLM.from_pretrained(
+        #     model_name,
+        #     torch_dtype=dtype,
+        #     trust_remote_code=True,
+        #     low_cpu_mem_usage=True,
+        #     attn_implementation="sdpa",
+        # ).to(f"cuda:{0}")
+        # for p in self.reference_model.parameters():
+        #     p.requires_grad_(False)
+        #
+        # self.reference_model.config.pad_token_id = self.tokenizer.pad_token_id
+        #
+        # self.optimizer = create_optimizer(self, config=config)
+        # self.scheduler = create_scheduler(self.optimizer, num_steps)
+        # self.model.gradient_checkpointing_enable()
 
     @torch.no_grad()
     def _prompt_token_lengths(self, prompts: List[str]) -> List[int]:
