@@ -52,8 +52,8 @@ class AsyncSGLangEngineWrapper:
             top_p=think_top_p,
             max_tokens=think_max_new_tokens,
             stop=[THINK_STOP],
-            logprobs=True,  # This parameter works because SGLang supports it
-            top_logprobs=5,
+            return_logprob=True,  # This parameter works because SGLang supports it
+            # top_logprobs=5,
         extra_body=payload_extra_1,
         )
         # Initialize results: (text, flag, top_logprobs_seq)
