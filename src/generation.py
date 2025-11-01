@@ -52,8 +52,9 @@ class AsyncSGLangEngineWrapper:
             top_p=think_top_p,
             max_tokens=think_max_new_tokens,
             stop=[THINK_STOP],
-            logprobs=logprobs_k,
-            extra_body=payload_extra_1,
+            logprobs=True,  # This parameter works because SGLang supports it
+            top_logprobs=5,
+        extra_body=payload_extra_1,
         )
         # Initialize results: (text, flag, top_logprobs_seq)
         results: List[tuple[str, int, List[Dict[str, Any]]]] = [("", 0, [])] * len(resp1.choices)
