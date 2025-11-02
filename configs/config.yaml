@@ -26,7 +26,7 @@ reward_model:
 
 
 dataset:
-  name: omrisap/300K-numina-math-ds          # e.g. "your-username/your-math-dataset" or local path
+  name: /workspace/merged_ds #omrisap/300K-numina-math-ds          # e.g. "your-username/your-math-dataset" or local path
   split: train
   field_question: problem
   field_answer: final_answer
@@ -52,7 +52,7 @@ hardware:
 
 train:
   batch_size: 24
-  n_samples_per_problem: 124
+  n_samples_per_problem: 24
   num_steps: 10000
   explore_exploit_flip_every_steps: 50
 
@@ -76,7 +76,7 @@ llm_trainer:
 tmp_weights_safetensors_path: /workspace/ADV/tmp_weights.safetenosrs
 
 evaluation:
-  at_start: true
-  every_steps: 25
+  at_start: false
+  every_steps: 25000
   n_samples_per_problem: 8
   sampling_batch_size: 24

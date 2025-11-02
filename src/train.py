@@ -71,22 +71,22 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
     # Process each question in the batch
     for i, (question, gold_answer) in enumerate(zip(questions, gold_answers)):
         # Safely extract rm_scores for this question
-        question_rm_scores: List[float] = []
-        if i < len(rm_scores):
-            row = rm_scores[i]
-            # row could be a tensor of shape [num_candidates] or something iterable
-            if isinstance(row, torch.Tensor):
-                # Flatten if needed then convert
-                question_rm_scores = row.detach().cpu().flatten().tolist()
-            else:
-                # Fallback: iterate and convert any tensor elements
-                tmp = []
-                for v in row:
-                    if isinstance(v, torch.Tensor):
-                        tmp.append(float(v.detach().cpu().item()))
-                    else:
-                        tmp.append(float(v))
-                question_rm_scores = tmp
+        # question_rm_scores: List[float] = []
+        # if i < len(rm_scores):
+        #     row = rm_scores[i]
+        #     # row could be a tensor of shape [num_candidates] or something iterable
+        #     if isinstance(row, torch.Tensor):
+        #         # Flatten if needed then convert
+        #         question_rm_scores = row.detach().cpu().flatten().tolist()
+        #     else:
+        #         # Fallback: iterate and convert any tensor elements
+        #         tmp = []
+        #         for v in row:
+        #             if isinstance(v, torch.Tensor):
+        #                 tmp.append(float(v.detach().cpu().item()))
+        #             else:
+        #                 tmp.append(float(v))
+        #         question_rm_scores = tmp
 
         # Convert correctness list items to plain ints (0/1) / bools
         raw_corr = correctness[i] if i < len(correctness) else []
@@ -105,13 +105,13 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
             "question": question,
             "gold_answer": gold_answer,
             "candidates": candidates[i] if i < len(candidates) else [],
-            "rm_scores": question_rm_scores,
+            # "rm_scores": question_rm_scores,
             "correctness": corr_list,
             "num_candidates": len(candidates[i]) if i < len(candidates) else 0,
-            "avg_rm_score": float(sum(question_rm_scores) / len(question_rm_scores)) if question_rm_scores else 0.0,
+            # "avg_rm_score": float(sum(question_rm_scores) / len(question_rm_scores)) if question_rm_scores else 0.0,
             "correct_count": correct_count,
-            'rm_avg_loss':rm_avg_loss,
-            'llm_avg_loss': llm_avg_loss
+            # 'rm_avg_loss':rm_avg_loss,
+            # 'llm_avg_loss': llm_avg_loss
         }
 
         # Skip serialization error printing; silently ignore failures
@@ -273,15 +273,9 @@ async def training_loop(config: Dict[str, Any]):
     train_ds, test_ds, q_field, a_field = load_dataset_handle(config)
     engine = build_sglang_engine(llm_name, generation_config)
 
-    rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
-    llm_trainer = load_llm_trainer(llm_name, llm_trainer__gpu, num_steps, llm_trainer_config)
+    # rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
+    # llm_trainer = load_llm_trainer(llm_name, llm_trainer__gpu, num_steps, llm_trainer_config)
     last_swap_task = await asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
-    if evaluation_config:
-        if evaluation_config.get('at_start'):
-            eval_res = await run_full_evaluation(
-                engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
-            )
-            print(f"[Eval@Start] {json.dumps(eval_res, indent=2)}")
 
 
     ensure_empty_log_dir(LOG_DIR)
@@ -294,13 +288,13 @@ async def training_loop(config: Dict[str, Any]):
             explore_bool = not explore_bool
             print(f'Fliped to: {explore_bool} at step {step}')
 
-        if step % llm_trainer_config['update_ref_model_every'] == 0 and step > 0:
-            llm_trainer.update_ref_model()
-        if evaluation_config and step > 0 and step % evaluation_config['every_steps'] == 0:
-            eval_res = await run_full_evaluation(
-                engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
-            )
-            print(f"[Eval@Step {step}] {json.dumps(eval_res, indent=2)}")
+        # if step % llm_trainer_config['update_ref_model_every'] == 0 and step > 0:
+        #     llm_trainer.update_ref_model()
+        # if evaluation_config and (step > 0 or evaluation_config['at_start']) and step % evaluation_config['every_steps'] == 0:
+        #     eval_res = await run_full_evaluation(
+        #         engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
+        #     )
+        #     print(f"[Eval@Step {step}] {json.dumps(eval_res, indent=2)}")
 
         records = get_batch_records(train_ds, batch_size, step)
         questions = [r[q_field] for r in records]
@@ -336,40 +330,42 @@ async def training_loop(config: Dict[str, Any]):
 
         clean_end_candidates(candidates)
 
-        try:
-            rm_scores = rm_model.score_reference(questions, candidates, rm_config)
-        except Exception as e:
-            print(f"[Step {step}] Exception during RM scoring: {e} will retry batch with 0.25 batch size.")
-            torch.cuda.empty_cache()
-            rm_scores = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
-        print(f"[Step {step}] RM Scoring time: {time.time() - st:.2f}s")
-        torch.cuda.empty_cache()
-        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores, explore_bool)
+        # try:
+        #     rm_scores = rm_model.score_reference(questions, candidates, rm_config)
+        # except Exception as e:
+        #     print(f"[Step {step}] Exception during RM scoring: {e} will retry batch with 0.25 batch size.")
+        #     torch.cuda.empty_cache()
+        #     rm_scores = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
+        # print(f"[Step {step}] RM Scoring time: {time.time() - st:.2f}s")
+        # torch.cuda.empty_cache()
+        # triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores, explore_bool)
 
 
-        if not triplets_for_rm:
-            continue
-        try:
-            rm_avg_loss = rm_model.train_step(triplets_for_rm)
-        except Exception as e:
-            print(f"[Step {step}] Exception during RM training: {e} will skip")
-            rm_avg_loss = 0.0
-        try:
-            llm_avg_loss = llm_trainer.train_step(triplets_for_llm)
-        except Exception as e:
-            print(f"[Step {step}] Exception during LLM training: {e} will skip")
-            llm_avg_loss = 0.0
+        # if not triplets_for_rm:
+        #     continue
+        # try:
+            # rm_avg_loss = rm_model.train_step(triplets_for_rm)
+        # except Exception as e:
+        #     print(f"[Step {step}] Exception during RM training: {e} will skip")
+        #     rm_avg_loss = 0.0
+        # try:
+        #     llm_avg_loss = llm_trainer.train_step(triplets_for_llm)
+        # except Exception as e:
+        #     print(f"[Step {step}] Exception during LLM training: {e} will skip")
+        #     llm_avg_loss = 0.0
 
-        print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
+        # print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
 
-        log_questions(questions, gold_answers, candidates, rm_scores, correctness_filtered_list, rm_avg_loss, llm_avg_loss)
+        # log_questions(questions, gold_answers, candidates, rm_scores, correctness_filtered_list, rm_avg_loss, llm_avg_loss)
+        log_questions(questions, gold_answers, candidates, None, correctness_filtered_list, None,
+                      None)
 
         # ---- ASYNC SAVE (end of iteration) ----
         # Before starting new save ensure earlier hot swap is done (we awaited it already above before generation).
         # Launch save task so disk write can overlap with next RM scoring & other CPU work.
         if last_swap_task is not None:
             await last_swap_task
-        last_save_task = asyncio.create_task(_async_save_model(llm_trainer, tmp_weights_path))
+        # last_save_task = asyncio.create_task(_async_save_model(llm_trainer, tmp_weights_path))
 
     # Final wait to ensure last save completes.
     if last_save_task is not None:
