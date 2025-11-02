@@ -6,7 +6,7 @@ import os
 import shutil
 from datetime import datetime
 from typing import Dict, Any, List, Tuple, Optional
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer
 from .prompting import build_prompts
 from .generation import build_sglang_engine
@@ -27,7 +27,8 @@ def load_config(path: str) -> Dict[str, Any]:
 def load_dataset_handle(cfg: Dict[str, Any]):
     ds_cfg = cfg.get("dataset", {})
     name = ds_cfg.get("name")
-    ds = load_dataset(name)
+    # ds = load_dataset(name)
+    ds = load_from_disk(name)
     return ds['train'], ds['test'], ds_cfg.get("field_question", "problem"), ds_cfg.get("field_answer", "final_answer")
 
 def get_batch(dataset: List[str], batch_size: int, step: int) -> List[str]:
