@@ -26,7 +26,7 @@ reward_model:
 
 
 dataset:
-  name: /workspace/ADV/merged_ds #omrisap/300K-numina-math-ds          # e.g. "your-username/your-math-dataset" or local path
+  name: /workspace/ADV/filtered/ #omrisap/300K-numina-math-ds          # e.g. "your-username/your-math-dataset" or local path
   split: train
   field_question: problem
   field_answer: final_answer
