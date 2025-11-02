@@ -212,7 +212,7 @@ def filter_and_select_mixed(
     mixed_indices: List[int] = []
     for i, row in enumerate(filtered_correctness):
         vals = set(row)
-        if 1 in vals and 0 in vals:
+        if 0 in vals:
             mixed_indices.append(i)
     if not mixed_indices:
         return [], [], [], []
@@ -223,18 +223,6 @@ def filter_and_select_mixed(
     correctness_f = [filtered_correctness[i] for i in mixed_indices]
     return questions_f, gold_answers_f, candidates_f, correctness_f
 
-
-def clean_end_candidates(candidates: List[List[str]]):
-    pattern = re.compile(r"\\boxed\s*\{(.*?)\}", flags=re.DOTALL)
-
-
-    for row in candidates:
-        for c in row:
-            matches = list(pattern.finditer(c))
-            if not matches:
-                continue
-            last_match = matches[-1]
-            row[row.index(c)] = c[:last_match.span()[1] + 2]
 
 
 
@@ -330,7 +318,6 @@ async def training_loop(config: Dict[str, Any]):
             correctness_tensor[qi, :len(row)] = torch.tensor(row, dtype=torch.int32)
         st = time.time()
 
-        clean_end_candidates(candidates)
 
         # try:
         #     rm_scores = rm_model.score_reference(questions, candidates, rm_config)
