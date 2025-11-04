@@ -1,6 +1,6 @@
 model:
   llm_name: omrisap/Qwen2.5-Math-1.5B-5K-SFT-think
-  rm_name: nvidia/AceMath-7B-RM
+  rm_name: omrisap/Qwen2.5-Math-PRM-1.5B
 
 reward_model:
   max_tokens_per_batch_infer: 25000
@@ -26,7 +26,7 @@ reward_model:
 
 
 dataset:
-  name: /workspace/ADV/filtered/ #omrisap/300K-numina-math-ds          # e.g. "your-username/your-math-dataset" or local path
+  name: omrisap/300K-numina-math-ds          # e.g. "your-username/your-math-dataset" or local path
   split: train
   field_question: problem
   field_answer: final_answer
