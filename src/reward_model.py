@@ -34,6 +34,7 @@ class AceMathRewardModel:
     ):
         device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
         self.model_name = model_name
+        print(self.model_name, device)
         self.device = device
         self.rm_config = rm_config  # no fallback
         self.train_config = self.rm_config.get("train")
@@ -197,7 +198,7 @@ class AceMathRewardModel:
                         enc_local[k] = v.pin_memory()
                 enc_local = {k: v.to(self.device, non_blocking=True) for k, v in enc_local.items()}
             return enc_local
-
+        print(f'self.device: {self.device}, use_double_buffer: {use_double_buffer}, prefetch_stream: {prefetch_stream}')
         if use_double_buffer:
             with torch.cuda.stream(prefetch_stream):
                 next_enc = prepare_batch(batches[0])

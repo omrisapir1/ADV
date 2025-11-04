@@ -337,7 +337,6 @@ async def training_loop(config: Dict[str, Any]):
 
     llm_trainer_config = config.get("llm_trainer")
     num_steps = config["train"]["num_steps"]
-    flip_exploit_every_steps = config["train"].get("explore_exploit_flip_every_steps")
     batch_size = config["train"]["batch_size"]
     n_samples = config["train"]["n_samples_per_problem"]
     gamma = config["train"]["gamma"]
