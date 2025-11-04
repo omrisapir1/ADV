@@ -120,12 +120,12 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         all_gold_answers.extend(batch_gold)
         all_candidate_texts.extend(batch_candidate_texts)
         # Reward scoring per batch
-        try:
-            batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config)
-        except Exception as e:
-            print(f"[Eval Sampling] RM scoring exception on batch {start}:{end}: {e}; retry small batch.")
-            torch.cuda.empty_cache()
-            batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config, forced_small_batch_size=True)
+        # try:
+        batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config)
+        # except Exception as e:
+        #     print(f"[Eval Sampling] RM scoring exception on batch {start}:{end}: {e}; retry small batch.")
+        #     torch.cuda.empty_cache()
+        #     batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config, forced_small_batch_size=True)
         torch.cuda.empty_cache()
         b_rows, b_cols = batch_rm_scores_model.shape
         rm_scores[start:start + b_rows, :b_cols] = batch_rm_scores_model.detach().to(dtype=torch.float32, device='cpu')
