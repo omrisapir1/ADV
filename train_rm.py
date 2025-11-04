@@ -49,6 +49,7 @@ PATH_EVAL    = "prm_eval_500"
 
 SAVE_DIR = "qwen2p5_math_1p5B_prm_student_no_teacher"
 HF_REPO_ID = "omrisap/Qwen2.5-Math-PRM-1.5B"
+HF_TOKEN = "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"
 PUSH_TO_HUB = True  # set HF_TOKEN env var outside
 
 MAX_LEN = 4096
