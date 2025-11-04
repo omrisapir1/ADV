@@ -54,7 +54,7 @@ train:
   batch_size: 24
   n_samples_per_problem: 24
   num_steps: 10000
-  explore_exploit_flip_every_steps: 50
+  gamma: 0.5
 
 
 llm_trainer:
