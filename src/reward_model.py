@@ -85,8 +85,8 @@ class AceMathRewardModel:
         self.pair_batch_size = int(self.train_config.get("batch_size"))
         self.optimizer = create_optimizer(self, self.rm_config)
         self.scheduler = create_scheduler(self.optimizer, num_steps)
-        if hasattr(self.model, "gradient_checkpointing_enable"):
-            self.model.gradient_checkpointing_enable()
+        # if hasattr(self.model, "gradient_checkpointing_enable"):
+        #     self.model.gradient_checkpointing_enable()
 
     def save_state(self, path: str):
         os.makedirs(path, exist_ok=True)
@@ -258,8 +258,8 @@ class AceMathRewardModel:
         return r_pos, r_neg
 
     def train_step(self, triplets: List[Tuple[str, str, str]]) -> float:
-        if hasattr(self.model, "gradient_checkpointing_enable"):
-            self.model.gradient_checkpointing_enable()
+        # if hasattr(self.model, "gradient_checkpointing_enable"):
+        #     self.model.gradient_checkpointing_enable()
         self.model.train()
         batch_size = self.pair_batch_size
         total_loss = 0.0
