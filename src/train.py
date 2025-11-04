@@ -146,6 +146,47 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
     # Silenced log output
     # print(f"Logged results to {log_file}")
 
+# ---- Helper normalization utilities (for LLM triplet selection) ----
+
+def _safe_minmax(x: torch.Tensor) -> torch.Tensor:
+    x_min = torch.nanmin(x)
+    x_max = torch.nanmax(x)
+    if (not torch.isfinite(x_min)) or (not torch.isfinite(x_max)) or (x_max - x_min) < 1e-6:
+        return torch.zeros_like(x)
+    return (x - x_min) / (x_max - x_min)
+
+
+def _safe_zscore(x: torch.Tensor) -> torch.Tensor:
+    mu = torch.nanmean(x)
+    sigma = torch.nanstd(x)
+    if (not torch.isfinite(sigma)) or sigma < 1e-6:
+        return torch.zeros_like(x)
+    return (x - mu) / sigma
+
+
+def _normalize_per_question(scores_row: torch.Tensor, mode: str = "z") -> torch.Tensor:
+    if mode == "z":
+        return _safe_zscore(scores_row)
+    return _safe_minmax(scores_row)
+
+
+def _select_triplet_for_llm(
+    correct_ids,
+    incorrect_ids,
+    s_trained_row: torch.Tensor,
+    s_ref_row: torch.Tensor,
+    alpha: float,
+    norm_mode: str = "z",
+) -> tuple[int, int]:
+    """Composite score S[j] = -alpha * norm(trained)[j] + (1 - alpha) * norm(ref)[j].
+    Higher S => better positive selection; lower S => negative selection."""
+    t_norm = _normalize_per_question(s_trained_row, mode=norm_mode)
+    r_norm = _normalize_per_question(s_ref_row, mode=norm_mode)
+    S = -alpha * t_norm + (1.0 - alpha) * r_norm
+    llm_pos_j = max(correct_ids, key=lambda j: float(S[j]))
+    llm_neg_j = min(incorrect_ids, key=lambda j: float(S[j]))
+    return llm_pos_j, llm_neg_j
+
 
 def choose_pos_neg_triplets(
     questions: List[str],
@@ -167,18 +208,30 @@ def choose_pos_neg_triplets(
             row_flags = [int(correctness[qi, j].item()) for j in range(len(cand_list))]
         else:
             row_flags = correctness[qi]
-        llm_scores_row = gamma * (1 - rm_scores[qi]) + (1 - gamma) * rm_scores_ref[qi]
+        # rm_scores_row retained for RM triplet selection
         rm_scores_row = rm_scores[qi]
 
         correct_ids = [j for j, v in enumerate(row_flags) if v == 1]
         incorrect_ids = [j for j, v in enumerate(row_flags) if v == 0]
         if not correct_ids or not incorrect_ids:
             continue
+        # RM selection unchanged
         rm_pos_j = min(correct_ids, key=lambda j: rm_scores_row[j])
         rm_neg_j = max(incorrect_ids, key=lambda j: rm_scores_row[j])
 
-        llm_pos_j = max(correct_ids, key=lambda j: llm_scores_row[j])
-        llm_neg_j = min(incorrect_ids, key=lambda j: llm_scores_row[j])
+        # ---- New LLM selection logic with per-question normalization ----
+        K = len(cand_list)
+        # Slice to actual candidate count for this question
+        row_trained = rm_scores[qi, :K]
+        row_ref = rm_scores_ref[qi, :K]
+        llm_pos_j, llm_neg_j = _select_triplet_for_llm(
+            correct_ids,
+            incorrect_ids,
+            s_trained_row=row_trained,
+            s_ref_row=row_ref,
+            alpha=float(gamma),
+            norm_mode="z",
+        )
 
         triplets_for_rm.append((q, cand_list[rm_pos_j], cand_list[rm_neg_j]))
         triplets_for_llm.append((q, cand_list[llm_pos_j], cand_list[llm_neg_j]))

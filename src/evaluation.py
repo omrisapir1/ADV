@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 import torch
 from sklearn.metrics import roc_auc_score
+import pandas as pd  # added for DataFrame export
 
 try:
     from .prompting import build_prompts
@@ -136,6 +137,38 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
     avg_auc = _average_auc(rm_scores, correctness)
     avg_auc_ref = _average_auc(rm_scores_ref, correctness)  # second AUC
     amb_pct = _percent_ambiguous(correctness)
+
+    # Build and persist a DataFrame with per-question details
+    details_rows: List[Dict[str, Any]] = []
+    for i, q in enumerate(all_questions):
+        bool_correctness = [v == 1 for v in correctness[i]]
+        details_rows.append({
+            'question': q,
+            'candidates': all_candidate_texts[i],
+            # user requested column name with typo: correct_inccorect
+            'correct_inccorect': bool_correctness,
+            # keep previous correct spelling as alias for possible downstream use
+            'correct_incorrect': bool_correctness,
+            'rm_scores': [float(x) if x == x else None for x in rm_scores[i].tolist()],
+            # user requested rm_rf_scores (interpreted as ref scores); provide both names
+            'rm_rf_scores': [float(x) if x == x else None for x in rm_scores_ref[i].tolist()],
+            'rm_ref_scores': [float(x) if x == x else None for x in rm_scores_ref[i].tolist()],
+        })
+    # DataFrame will include all columns; user-specified ordering first
+    df = pd.DataFrame(details_rows, columns=[
+        'question', 'candidates', 'correct_inccorect', 'rm_scores', 'rm_rf_scores',
+        'correct_incorrect', 'rm_ref_scores'
+    ])
+    os.makedirs('evaluation_logs', exist_ok=True)
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    df_path = os.path.join('evaluation_logs', f'sampling_details_{ts}.parquet')
+    try:
+        df.to_parquet(df_path, index=False)
+    except Exception:
+        # fallback to csv if parquet engine unavailable
+        df_path = os.path.join('evaluation_logs', f'sampling_details_{ts}.csv')
+        df.to_csv(df_path, index=False)
+
     return {
         'mode': 'sampling',
         'num_questions': len(all_questions),
@@ -144,7 +177,8 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         'avg_auc': avg_auc,
         'avg_auc_ref': avg_auc_ref,
         'percent_minus_one': amb_pct,
-        'sampling_batch_size': batch_size
+        'sampling_batch_size': batch_size,
+        'details_dataframe_path': df_path
     }
 
 
