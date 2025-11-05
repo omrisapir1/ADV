@@ -29,7 +29,7 @@ from tqdm import tqdm
 from modeling_student_prm import StudentPRM, StudentPRMConfig
 import shutil
 
-from src.prompting import SYSTEM_PROMPT
+SYSTEM_PROMPT = "You are a helpful math reasoning assistant. Provide step-by-step reasoning and put the final answer in \\boxed{}."
 
 # ---------------- Config ----------------
 SEED = 42
