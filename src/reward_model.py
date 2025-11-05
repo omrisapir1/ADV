@@ -132,11 +132,12 @@ class AceMathRewardModel:
         m = model if model is not None else self.model
         ctx_amp = torch.cuda.amp.autocast(dtype=torch.bfloat16) if self.device.startswith("cuda") else torch.nullcontext()
         ctx_grad = torch.enable_grad() if grad_enabled else torch.inference_mode()
-        print(enc)
+        print(enc[0])
         with ctx_grad, ctx_amp:
             out = m(**enc)
             logits = out.logits
-            print(logits)
+            print(logits[0])
+            raise
             return logits.to(dtype=torch.float32)
 
     def _apply_padding_and_move(self, batch_texts: List[str], pad_to_mult8: bool, grad_enabled: bool) -> torch.Tensor:
