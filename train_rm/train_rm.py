@@ -135,8 +135,11 @@ class Collator:
 
 # -------------- BT loss ------------------
 def bt_loss(logits):
+    print(f'Full logits {logits}')
     pos = logits[0::2,1]  # assign positive class logit
+    print(f'Pos logits {pos}')
     neg = logits[1::2,1]
+    print(f'NEG logits {pos}')
     return -torch.log(torch.sigmoid(pos-neg)+1e-12).mean()
 
 
