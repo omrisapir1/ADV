@@ -30,7 +30,6 @@ class AceMathRewardModel:
     ):
         device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
         self.model_name = model_name
-        print(self.model_name, device)
         self.device = device
         self.rm_config = rm_config  # no fallback
         self.train_config = self.rm_config.get("train")
@@ -133,9 +132,11 @@ class AceMathRewardModel:
         m = model if model is not None else self.model
         ctx_amp = torch.cuda.amp.autocast(dtype=torch.bfloat16) if self.device.startswith("cuda") else torch.nullcontext()
         ctx_grad = torch.enable_grad() if grad_enabled else torch.inference_mode()
+        print(enc)
         with ctx_grad, ctx_amp:
             out = m(**enc)
             logits = out.logits
+            print(logits)
             return logits.to(dtype=torch.float32)
 
     def _apply_padding_and_move(self, batch_texts: List[str], pad_to_mult8: bool, grad_enabled: bool) -> torch.Tensor:
@@ -160,6 +161,7 @@ class AceMathRewardModel:
             max_k = max(max_k, len(cand_list))
             for kj, sol in enumerate(cand_list):
                 text = self._chat(q, sol)
+                print(text)
                 texts.append(text)
                 meta.append((qi, kj))
         if not texts:
