@@ -1,10 +1,10 @@
 from typing import List
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-
+SYSTEM_PROMPT = "You are a helpful math reasoning assistant. Provide step-by-step reasoning and put the final answer in \\boxed{}."
 def build_prompt(question: str, tokenizer: AutoTokenizer) -> str:
     messages = [
-        {"role": "system", "content": "You are a helpful math reasoning assistant. Provide step-by-step reasoning and put the final answer in \\boxed{}."},
+        {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": question}
     ]
 

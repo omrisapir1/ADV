@@ -29,6 +29,7 @@ from tqdm import tqdm
 from modeling_student_prm import StudentPRM, StudentPRMConfig
 import shutil
 
+from src.prompting import SYSTEM_PROMPT
 
 # ---------------- Config ----------------
 SEED = 42
@@ -38,7 +39,7 @@ DTYPE = torch.bfloat16
 BATCH_SIZE = 2
 LR = 1e-5
 WEIGHT_DECAY = 0.01
-SYSTEM_PROMPT = "Please reason step by step, and put your final answer within \\boxed{}."
+
 
 STUDENT_BASE = "Qwen/Qwen2.5-Math-1.5B"
 STUDENT_POOL_TOKEN = "</think>"
@@ -71,7 +72,7 @@ def build_chat(tokenizer, question, solution, end_token):
         {"role": "user",   "content": question},
         {"role": "assistant", "content": solution + end_token},
     ]
-    return tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
+    return tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False, continue_final_message=True)
 
 def last_token_index(input_ids, token_id):
     mask = (input_ids == token_id)
@@ -144,11 +145,13 @@ def bt_loss(logits):
 def evaluate(eval_split, tok, model):
     model.eval()
     pool_id = tok.convert_tokens_to_ids(STUDENT_POOL_TOKEN)
+    model.pool_id = pool_id
     wrong_cols=["q_wrong_0","q_wrong_1","s_wrong_0","s_wrong_1"]
 
     def score(q, sols):
         if not sols: return []
         chats=[build_chat(tok,q,s,STUDENT_POOL_TOKEN) for s in sols]
+        print(f'Eval struxture is {chats[0]}')
         enc = tok(chats, return_tensors="pt", padding=True, truncation=True,max_length=MAX_LEN).to(DEVICE)
         with torch.autocast(device_type="cuda", dtype=DTYPE):
             logits = model(enc["input_ids"],enc.get("attention_mask")).logits  # updated for SequenceClassifierOutput
@@ -184,7 +187,8 @@ def evaluate(eval_split, tok, model):
 def train_loop():
     set_seed(SEED)
 
-    trainA = load_from_disk(PATH_TRAIN_A)
+    trainA = load_from_disk(PATH_TRAIN_A).select(range(5))
+
     trainB = load_from_disk(PATH_TRAIN_B)
     evalS  = load_from_disk(PATH_EVAL)
 
@@ -212,6 +216,7 @@ def train_loop():
         avg=0; n=0
         for batch in pbar:
             with torch.autocast(device_type="cuda",dtype=DTYPE):
+                print(f'full text of first question {tok.decode(batch["input_ids"][0])}')
                 logits = model(batch["input_ids"].to(DEVICE), batch["attention_mask"].to(DEVICE)).logits  # updated
                 loss = bt_loss(logits)
             loss.backward()
