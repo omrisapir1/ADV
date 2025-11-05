@@ -108,7 +108,6 @@ class StudentPRM(PreTrainedModel):
         )
         hidden = out.hidden_states[-1]
         pos = last_token_index(input_ids, attention_mask)
-        print(f'Last token positions: {pos} length is {len(input_ids)} attention_mask sum is {attention_mask.sum()} and token_id is {input_ids[0,pos]}')
         pooled = hidden[torch.arange(len(input_ids), device=input_ids.device), pos]
         # Match head weight dtype for safety (bfloat16 training etc.)
         if pooled.dtype != self.head.weight.dtype:

@@ -135,11 +135,8 @@ class Collator:
 
 # -------------- BT loss ------------------
 def bt_loss(logits):
-    print(f'Full logits {logits}')
     pos = logits[0::2,1]  # assign positive class logit
-    print(f'Pos logits {pos}')
     neg = logits[1::2,1]
-    print(f'NEG logits {pos}')
     return -torch.log(torch.sigmoid(pos-neg)+1e-12).mean()
 
 
@@ -154,7 +151,7 @@ def evaluate(eval_split, tok, model):
     def score(q, sols):
         if not sols: return []
         chats=[build_chat(tok,q,s,STUDENT_POOL_TOKEN) for s in sols]
-        print(f'Eval struxture is {chats[0]}')
+
         enc = tok(chats, return_tensors="pt", padding=True, truncation=True,max_length=MAX_LEN).to(DEVICE)
         with torch.autocast(device_type="cuda", dtype=DTYPE):
             logits = model(enc["input_ids"],enc.get("attention_mask")).logits  # updated for SequenceClassifierOutput
@@ -219,7 +216,7 @@ def train_loop():
         avg=0; n=0
         for batch in pbar:
             with torch.autocast(device_type="cuda",dtype=DTYPE):
-                print(f'full text of first question {tok.decode(batch["input_ids"][0])}')
+
                 logits = model(batch["input_ids"].to(DEVICE), batch["attention_mask"].to(DEVICE)).logits  # updated
                 loss = bt_loss(logits)
             loss.backward()
@@ -256,19 +253,18 @@ def train_loop():
 
     print(f"\n✅ Saved HF format to {SAVE_DIR}")
 
-    if PUSH_TO_HUB:
-        from huggingface_hub import HfApi, login
-        token = os.getenv("HF_TOKEN", HF_TOKEN)
-        if not token:
-            print("⚠️ HF_TOKEN not provided; skipping hub push.")
-        else:
-            login(token)
-            api = HfApi()
-            api.create_repo(HF_REPO_ID, private=False, exist_ok=True)
-            api.upload_folder(repo_id=HF_REPO_ID, folder_path=SAVE_DIR)
-            print(f"✅ Pushed to https://huggingface.co/{HF_REPO_ID}")
-    elif PUSH_TO_HUB and not hf_token:
-        print("⚠️ HF_TOKEN env var not set; skipping hub push.")
+
+    from huggingface_hub import HfApi, login
+    token = HF_TOKEN
+    if not token:
+        print("⚠️ HF_TOKEN not provided; skipping hub push.")
+    else:
+        login(token)
+        api = HfApi()
+        api.create_repo(HF_REPO_ID, private=False, exist_ok=True)
+        api.upload_folder(repo_id=HF_REPO_ID, folder_path=SAVE_DIR)
+        print(f"✅ Pushed to https://huggingface.co/{HF_REPO_ID}")
+
 
 
 if __name__=="__main__":
