@@ -21,12 +21,10 @@ from transformers import (
 from transformers.modeling_outputs import SequenceClassifierOutput
 
 
-def last_token_index(input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-    """return position of last token in input_ids which is not padding"""
-    seq_length = input_ids.size(1)
-    lengths = attention_mask.sum(dim=1)  # shape (batch_size,)
-    last_indices = lengths - 1  # shape (batch_size,)
-    return last_indices
+def last_token_index(input_ids: torch.Tensor, token_id: int) -> torch.Tensor:
+    mask = (input_ids == token_id)
+    flipped = torch.flip(mask, dims=[1]).int().argmax(dim=1)
+    return (input_ids.shape[1] - 1) - flipped
 
 
 class StudentPRMConfig(PretrainedConfig):
@@ -107,7 +105,7 @@ class StudentPRM(PreTrainedModel):
             use_cache=False,
         )
         hidden = out.hidden_states[-1]
-        pos = last_token_index(input_ids, attention_mask)
+        pos = last_token_index(input_ids, pool_id)
         pooled = hidden[torch.arange(len(input_ids), device=input_ids.device), pos]
         # Match head weight dtype for safety (bfloat16 training etc.)
         if pooled.dtype != self.head.weight.dtype:

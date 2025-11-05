@@ -187,7 +187,7 @@ def evaluate(eval_split, tok, model):
 def train_loop():
     set_seed(SEED)
 
-    trainA = load_from_disk(PATH_TRAIN_A).select(range(5))
+    trainA = load_from_disk(PATH_TRAIN_A)
 
     trainB = load_from_disk(PATH_TRAIN_B)
     evalS  = load_from_disk(PATH_EVAL)

@@ -5,6 +5,8 @@ import os
 import torch
 from transformers import AutoModel, AutoTokenizer
 
+from .prompting import SYSTEM_PROMPT
+
 try:
     from .optimizer import create_optimizer, create_scheduler
     from .losses import pairwise_rm_loss
@@ -14,12 +16,6 @@ except:
 
 
 # Utility to find last occurrence index of a token id per sequence
-def last_token_index(input_ids: torch.Tensor, token_id: int) -> torch.Tensor:
-    mask = (input_ids == token_id)
-    flipped = torch.flip(mask, dims=[1]).int().argmax(dim=1)
-    return (input_ids.shape[1] - 1) - flipped
-
-
 class AceMathRewardModel:
     """Reward model adapted to PRM (Process Reward Model).
     Uses built-in PRM head accessed via model.score; pools final hidden state at last </think> token.
@@ -103,11 +99,12 @@ class AceMathRewardModel:
         )
 
     def _chat(self, question: str, solution: str):
-        return [
-            {"role": "system", "content": "Please reason step by step, and check your final answer within \\boxed{}."},
+        msgs = [
+            {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": question},
             {"role": "assistant", "content": solution},
         ]
+        return self.tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False,continue_final_message=True)
 
     @staticmethod
     def pack_by_tokens(lengths: List[int], max_tokens_per_batch: int, max_seqs_per_batch: int) -> List[List[int]]:
@@ -162,8 +159,7 @@ class AceMathRewardModel:
             cand_list = [self.clear_solution(s) for s in cand_list]
             max_k = max(max_k, len(cand_list))
             for kj, sol in enumerate(cand_list):
-                chat = self._chat(q, sol)
-                text = self.tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=False)
+                text = self._chat(q, sol)
                 texts.append(text)
                 meta.append((qi, kj))
         if not texts:
@@ -198,7 +194,6 @@ class AceMathRewardModel:
                         enc_local[k] = v.pin_memory()
                 enc_local = {k: v.to(self.device, non_blocking=True) for k, v in enc_local.items()}
             return enc_local
-        print(f'self.device: {self.device}, use_double_buffer: {use_double_buffer}, prefetch_stream: {prefetch_stream}')
         if use_double_buffer:
             with torch.cuda.stream(prefetch_stream):
                 next_enc = prepare_batch(batches[0])
@@ -232,8 +227,8 @@ class AceMathRewardModel:
         solutions_neg = [self.clear_solution(s) for s in solutions_neg]
         texts: List[str] = []
         for q, p, n in zip(questions, solutions_pos, solutions_neg):
-            texts.append(self.tokenizer.apply_chat_template(self._chat(q, p), tokenize=False, add_generation_prompt=False))
-            texts.append(self.tokenizer.apply_chat_template(self._chat(q, n), tokenize=False, add_generation_prompt=False))
+            texts.append(self._chat(q, p))
+            texts.append(self._chat(q, n))
         prelim = self.tokenizer(texts, padding=False, truncation=True)
         lengths = [len(ids) for ids in prelim["input_ids"]]
         order = sorted(range(len(texts)), key=lambda i: lengths[i], reverse=True)
@@ -302,3 +297,9 @@ class AceMathRewardModel:
 
 def load_reward_model(model_name: str, gpu_id: int, rm_config: Optional[dict] = None, num_steps: Optional[int] = None) -> AceMathRewardModel:
     return AceMathRewardModel(model_name, gpu_id, rm_config, num_steps)
+
+
+def last_token_index(input_ids: torch.Tensor, token_id: int) -> torch.Tensor:
+    mask = (input_ids == token_id)
+    flipped = torch.flip(mask, dims=[1]).int().argmax(dim=1)
+    return (input_ids.shape[1] - 1) - flipped
