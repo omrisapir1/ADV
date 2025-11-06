@@ -202,6 +202,10 @@ def train_loop():
     config = StudentPRMConfig(base_model_name=STUDENT_BASE, pool_token=STUDENT_POOL_TOKEN, hidden_size=base.config.hidden_size, vocab_size=len(tok), num_labels=2)
     model = StudentPRM(config, base=base, tokenizer=tok).to(DEVICE)
 
+
+    auto_model = AutoModel.from_pretrained(HF_REPO_ID,trust_remote_code=True)
+    model.load_state_dict(auto_model.state_dict(),strict=False)
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
 
     dsA = PairDataset(trainA); dlA = DataLoader(dsA, batch_size=BATCH_SIZE, shuffle=True, collate_fn=Collator(tok,MAX_LEN))
@@ -226,14 +230,14 @@ def train_loop():
             pbar.set_postfix({"L_BT":f"{avg/n:.4f}"})
 
 
-    for e in range(1):
-        run_epoch(dlA,f"A-{e+1}")
+    # for e in range(1):
+    #     run_epoch(dlA,f"A-{e+1}")
 
     # eval
     r=evaluate(evalS,tok,model)
     print("\n[Eval after 2 epochs A]")
     for k,v in r.items(): print(k,":",f"{v:.4f}")
-
+    raise
 
     for e in range(1):
         run_epoch(dlB,f"B-{e+1}")
