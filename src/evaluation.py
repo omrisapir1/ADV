@@ -196,7 +196,7 @@ def merge_eval_results(*results: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 async def run_full_evaluation(engine, rm_model, test_ds, q_field: str, a_field: str, tokenizer, generation_config: Dict[str, Any], evaluation_config: Dict[str, Any], rm_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    evaluate_sampling(engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config,
+    await evaluate_sampling(engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config,
                       rm_config)
     # greedy_res, sampling_res = await asyncio.gather(
     #     evaluate_greedy(engine, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config),
