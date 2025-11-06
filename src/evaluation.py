@@ -97,7 +97,7 @@ async def evaluate_greedy(engine, test_ds, q_field: str, a_field: str, tokenizer
 
 async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: str, tokenizer, generation_config: Dict[str, Any], evaluation_config: Dict[str, Any], rm_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     n_samples = int(evaluation_config.get('n_samples_per_problem'))
-    total = 5#len(test_ds)
+    total = 15#len(test_ds)
     batch_size = int(evaluation_config.get('sampling_batch_size', total))
     if batch_size <= 0:
         batch_size = total
