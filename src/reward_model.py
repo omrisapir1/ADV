@@ -138,7 +138,6 @@ class AceMathRewardModel:
             out = m(**enc)
             logits = out.logits
             print(logits[0])
-            raise
             return logits.to(dtype=torch.float32)
 
     def _apply_padding_and_move(self, batch_texts: List[str], pad_to_mult8: bool, grad_enabled: bool) -> torch.Tensor:
