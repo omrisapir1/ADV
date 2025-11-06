@@ -350,7 +350,11 @@ async def training_loop(config: Dict[str, Any]):
     train_ds, test_ds, q_field, a_field = load_dataset_handle(config)
     test_ds = load_dataset('omrisap/6K-think-SFT-math')['train']
 
-    test_ds['final_answer'] =[extract_final_answer(s)[0] for s in test_ds['sol_with_think']]
+    # test_ds['final_answer'] =[extract_final_answer(s)[0] for s in test_ds['sol_with_think']]
+    test_ds = test_ds.add_column(
+        "final_answer",
+        [extract_final_answer(s)[0] for s in test_ds["sol_with_think"]]
+    )
     engine = build_sglang_engine(llm_name, generation_config)
 
     # rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
