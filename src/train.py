@@ -28,7 +28,7 @@ def load_dataset_handle(cfg: Dict[str, Any]):
     ds_cfg = cfg.get("dataset", {})
     name = ds_cfg.get("name")
     ds = load_dataset(name)
-    return ds['train'], ds['test'].select(range(1)), ds_cfg.get("field_question", "problem"), ds_cfg.get("field_answer", "final_answer")
+    return ds['train'], ds['test'], ds_cfg.get("field_question", "problem"), ds_cfg.get("field_answer", "final_answer")
 
 def get_batch(dataset: List[str], batch_size: int, step: int) -> List[str]:
     start = (step * batch_size) % len(dataset)
