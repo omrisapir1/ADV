@@ -97,7 +97,7 @@ async def evaluate_greedy(engine, test_ds, q_field: str, a_field: str, tokenizer
 
 async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: str, tokenizer, generation_config: Dict[str, Any], evaluation_config: Dict[str, Any], rm_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     n_samples = int(evaluation_config.get('n_samples_per_problem'))
-    total = len(test_ds)
+    total = 5#len(test_ds)
     batch_size = int(evaluation_config.get('sampling_batch_size', total))
     if batch_size <= 0:
         batch_size = total
@@ -105,8 +105,8 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
     all_questions: List[str] = []
     all_gold_answers: List[str] = []
     all_candidate_texts: List[List[str]] = []
-    rm_scores = torch.empty(total, n_samples, dtype=torch.float32).fill_(float('nan'))
-    rm_scores_ref = torch.empty(total, n_samples, dtype=torch.float32).fill_(float('nan'))  # new tensor for reference model
+    # rm_scores = torch.empty(total, n_samples, dtype=torch.float32).fill_(float('nan'))
+    # rm_scores_ref = torch.empty(total, n_samples, dtype=torch.float32).fill_(float('nan'))  # new tensor for reference model
 
     for start in range(0, total, batch_size):
         end = min(start + batch_size, total)
@@ -121,21 +121,22 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         all_candidate_texts.extend(batch_candidate_texts)
         # Reward scoring per batch
         # try:
-        batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config)
+        # batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config)
         # except Exception as e:
         #     print(f"[Eval Sampling] RM scoring exception on batch {start}:{end}: {e}; retry small batch.")
         #     torch.cuda.empty_cache()
         #     batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config, forced_small_batch_size=True)
         torch.cuda.empty_cache()
-        b_rows, b_cols = batch_rm_scores_model.shape
-        rm_scores[start:start + b_rows, :b_cols] = batch_rm_scores_model.detach().to(dtype=torch.float32, device='cpu')
-        rm_scores_ref[start:start + b_rows, :b_cols] = batch_rm_scores_ref.detach().to(dtype=torch.float32, device='cpu')  # fill reference scores
-        del batch_rm_scores_model, batch_rm_scores_ref, raw_candidates, batch_candidate_texts
+        # b_rows, b_cols = batch_rm_scores_model.shape
+        # rm_scores[start:start + b_rows, :b_cols] = batch_rm_scores_model.detach().to(dtype=torch.float32, device='cpu')
+        # rm_scores_ref[start:start + b_rows, :b_cols] = batch_rm_scores_ref.detach().to(dtype=torch.float32, device='cpu')  # fill reference scores
+        # del batch_rm_scores_model, batch_rm_scores_ref, raw_candidates, batch_candidate_texts
+        del raw_candidates, batch_candidate_texts
 
     correctness = compute_final_correctness(all_candidate_texts, all_gold_answers)
     avg_acc = _per_question_accuracy(correctness)
-    avg_auc = _average_auc(rm_scores, correctness)
-    avg_auc_ref = _average_auc(rm_scores_ref, correctness)  # second AUC
+    # avg_auc = _average_auc(rm_scores, correctness)
+    # avg_auc_ref = _average_auc(rm_scores_ref, correctness)  # second AUC
     amb_pct = _percent_ambiguous(correctness)
 
     # Build and persist a DataFrame with per-question details
@@ -149,10 +150,10 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
             'correct_inccorect': bool_correctness,
             # keep previous correct spelling as alias for possible downstream use
             'correct_incorrect': bool_correctness,
-            'rm_scores': [float(x) if x == x else None for x in rm_scores[i].tolist()],
+            # 'rm_scores': [float(x) if x == x else None for x in rm_scores[i].tolist()],
             # user requested rm_rf_scores (interpreted as ref scores); provide both names
-            'rm_rf_scores': [float(x) if x == x else None for x in rm_scores_ref[i].tolist()],
-            'rm_ref_scores': [float(x) if x == x else None for x in rm_scores_ref[i].tolist()],
+            # 'rm_rf_scores': [float(x) if x == x else None for x in rm_scores_ref[i].tolist()],
+            # 'rm_ref_scores': [float(x) if x == x else None for x in rm_scores_ref[i].tolist()],
         })
     # DataFrame will include all columns; user-specified ordering first
     df = pd.DataFrame(details_rows, columns=[
@@ -174,8 +175,8 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         'num_questions': len(all_questions),
         'n_samples_per_question': n_samples,
         'avg_accuracy': avg_acc,
-        'avg_auc': avg_auc,
-        'avg_auc_ref': avg_auc_ref,
+        # 'avg_auc': avg_auc,
+        # 'avg_auc_ref': avg_auc_ref,
         'percent_minus_one': amb_pct,
         'sampling_batch_size': batch_size,
         'details_dataframe_path': df_path
@@ -195,11 +196,13 @@ def merge_eval_results(*results: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 async def run_full_evaluation(engine, rm_model, test_ds, q_field: str, a_field: str, tokenizer, generation_config: Dict[str, Any], evaluation_config: Dict[str, Any], rm_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    greedy_res, sampling_res = await asyncio.gather(
-        evaluate_greedy(engine, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config),
-        evaluate_sampling(engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config)
-    )
-    combined = merge_eval_results(greedy_res, sampling_res)
-    log_evaluation(greedy_res, out_dir='evaluation_logs')
-    log_evaluation(sampling_res, out_dir='evaluation_logs')
-    return combined
+    evaluate_sampling(engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config,
+                      rm_config)
+    # greedy_res, sampling_res = await asyncio.gather(
+    #     evaluate_greedy(engine, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config),
+    #     evaluate_sampling(engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config)
+    # )
+    # combined = merge_eval_results(greedy_res, sampling_res)
+    # log_evaluation(greedy_res, out_dir='evaluation_logs')
+    # log_evaluation(sampling_res, out_dir='evaluation_logs')
+    # return combined
