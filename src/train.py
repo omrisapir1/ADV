@@ -372,7 +372,7 @@ async def training_loop(config: Dict[str, Any]):
                 engine, None, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
             )
             print(f"[Eval@Step {step}] {json.dumps(eval_res, indent=2)}")
-
+            exit(0)
         records = get_batch_records(train_ds, batch_size, step)
         questions = [r[q_field] for r in records]
         gold_answers = [r[a_field] for r in records]
