@@ -353,8 +353,8 @@ async def training_loop(config: Dict[str, Any]):
     test_ds['final_answer'] =[extract_final_answer(s)[0] for s in test_ds['sol_with_think']]
     engine = build_sglang_engine(llm_name, generation_config)
 
-    rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
-    llm_trainer = load_llm_trainer(llm_name, llm_trainer__gpu, num_steps, llm_trainer_config)
+    # rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
+    # llm_trainer = load_llm_trainer(llm_name, llm_trainer__gpu, num_steps, llm_trainer_config)
 
     ensure_empty_log_dir(LOG_DIR)
 
@@ -363,11 +363,9 @@ async def training_loop(config: Dict[str, Any]):
     for step in range(num_steps):
 
 
-        if step % llm_trainer_config['update_ref_model_every'] == 0 and step > 0:
-            llm_trainer.update_ref_model()
         if evaluation_config and (step > 0 or evaluation_config['at_start']) and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
-                engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
+                engine, None, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
             )
             print(f"[Eval@Step {step}] {json.dumps(eval_res, indent=2)}")
 
