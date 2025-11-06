@@ -132,8 +132,8 @@ class AceMathRewardModel:
         m = model if model is not None else self.model
         ctx_amp = torch.cuda.amp.autocast(dtype=torch.bfloat16) if self.device.startswith("cuda") else torch.nullcontext()
         ctx_grad = torch.enable_grad() if grad_enabled else torch.inference_mode()
-        with torch.set_printoptions(threshold=float('inf')):
-            print(enc['input_ids'][0,])
+        torch.set_printoptions(threshold=float('inf'))
+        print(enc['input_ids'][0,])
         with ctx_grad, ctx_amp:
             out = m(**enc)
             logits = out.logits
