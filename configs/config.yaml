@@ -1,6 +1,6 @@
 model:
   llm_name: omrisap/Qwen2.5-Math-1.5B-5K-SFT-think
-  rm_name: omrisap/Qwen2.5-Math-PRM-1.5B
+  rm_name: HuggingFaceH4/Qwen2.5-Math-1.5B-Instruct-PRM-0.2
 
 reward_model:
   max_tokens_per_batch_infer: 25000
