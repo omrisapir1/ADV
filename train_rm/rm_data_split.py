@@ -2,7 +2,7 @@ from datasets import load_dataset, Dataset
 import pandas as pd
 import numpy as np
 
-dataset_name = "omrisap/prm_dataset_6k"
+dataset_name = "omrisap/prm_dataset_6k_fixed"
 seed = 42
 
 # ------------------------
@@ -23,7 +23,7 @@ remain_df = df.drop(eval_df.index)
 # ------------------------
 # Helper masks
 # ------------------------
-q_mask = remain_df["q_wrong_0"].notnull() & (remain_df["q_wrong_0"] != "")
+q_mask = remain_df["qwen_incorrect_0"].notnull() & (remain_df["qwen_incorrect_0"] != "")
 s_mask = remain_df["s_wrong_0"].notnull() & (remain_df["s_wrong_0"] != "")
 
 q_df = remain_df[q_mask]
@@ -31,7 +31,7 @@ s_df = remain_df[s_mask]
 
 # ------------------------
 # 2) Dataset A
-#   - 500 rows w/ q_wrong_0
+#   - 500 rows w/ qwen_incorrect_0
 #   - ALL s_wrong_0 rows EXCEPT 500 reserved
 # ------------------------
 qA = q_df.sample(500, random_state=seed) if len(q_df) >= 500 else q_df.copy()
@@ -46,7 +46,7 @@ train_A_df = pd.concat([qA, sA]).drop_duplicates()
 # ------------------------
 # 3) Dataset B
 #    = reserved 500 s_wrong_0
-#    + remaining q_wrong_0 not in A
+#    + remaining qwen_incorrect_0 not in A
 # ------------------------
 qB = q_df.drop(qA.index)
 sB = sB_reserved
