@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import List, Tuple, Optional
 import os
 import torch
-from transformers import AutoModelForTokenClassification, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer
 
 from .prompting import SYSTEM_PROMPT
 
@@ -14,27 +14,12 @@ except:
     from optimizer import create_optimizer, create_scheduler
     from losses import pairwise_rm_loss
 
-# ------------------------------------------------------------------
-# Constants & helper mapping for sentinel pooling token
-DISPLAY_POOL_TOKEN = "</think>"      # Visible sentinel in app-level solutions
-BACKEND_POOL_STR   = "\n\n"          # Backend string that should tokenize to fixed id (expected 271)
-
-def _map_display_to_backend(s: str) -> str:
-    """Map user-facing sentinel token to backend string prior to tokenization."""
-    return s.replace(DISPLAY_POOL_TOKEN, BACKEND_POOL_STR)
-
-def last_token_index(input_ids: torch.Tensor, token_id: int) -> torch.Tensor:
-    mask = (input_ids == token_id)
-    flipped = torch.flip(mask, dims=[1]).int().argmax(dim=1)
-    return (input_ids.shape[1] - 1) - flipped
-# ------------------------------------------------------------------
 
 # Utility to find last occurrence index of a token id per sequence
 class AceMathRewardModel:
-    """Reward model adapted to PRM (Process Reward Model) via token classification.
-    Uses AutoModelForTokenClassification(num_labels=2); reward is class-1 logit
-    at the position of the final sentinel token (mapped DISPLAY_POOL_TOKEN → BACKEND_POOL_STR → id).
-    Keeps original batching, packing, pairwise loss, and reference model logic.
+    """Reward model adapted to PRM (Process Reward Model).
+    Uses built-in PRM head accessed via model.score; pools final hidden state at last </think> token.
+    Reward is positive class logit (index 1). Keeps original batching & loss logic.
     """
     def __init__(
         self,
@@ -49,39 +34,33 @@ class AceMathRewardModel:
         self.rm_config = rm_config  # no fallback
         self.train_config = self.rm_config.get("train")
 
-        # Tokenizer (no resizing; rely on existing vocab where BACKEND_POOL_STR id is stable)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=True)
         self.tokenizer.pad_token_id = getattr(self.tokenizer, "eos_token_id", 0)
         self.tokenizer.padding_side = "right"
 
-        # Trainable token-classification PRM
-        self.model = AutoModelForTokenClassification.from_pretrained(
+        # Load PRM base model (with built-in head: model.score)
+        self.model = AutoModel.from_pretrained(
             model_name,
-            num_labels=2,
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
         ).to(self.device)
+        # Removed strict .score validation to allow StudentPRM models without this attr
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
         self.model.eval()
 
-        # Frozen reference PRM
-        self.ref_model = AutoModelForTokenClassification.from_pretrained(
+        # Create frozen reference PRM model
+        self.ref_model = AutoModel.from_pretrained(
             model_name,
-            num_labels=2,
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
         ).to(self.device)
+        # Removed strict .score validation
         self.ref_model.config.pad_token_id = self.tokenizer.pad_token_id
         for p in self.ref_model.parameters():
             p.requires_grad = False
         self.ref_model.eval()
 
-        # Derive pooling token id from backend string (expected stable id, e.g., 271)
-        probe = self.tokenizer.encode(BACKEND_POOL_STR, add_special_tokens=False)
-        assert len(probe) >= 1, "Backend pool string did not tokenize as expected"
-        self.pool_token_id = probe[0]
-        # Optional strict check (commented to avoid hard failure if model differs)
-        # assert self.pool_token_id == 271, f"Expected 271, got {self.pool_token_id}"
+        self.pool_token_id = self.tokenizer.convert_tokens_to_ids("</think>")
         self.model.pool_id = self.pool_token_id
         self.ref_model.pool_id = self.pool_token_id
 
@@ -117,9 +96,12 @@ class AceMathRewardModel:
         )
 
     def _chat(self, question: str, solution: str):
-        solution_clean = _map_display_to_backend(solution)
-        return BACKEND_POOL_STR.join((question, solution_clean))
-
+        msgs = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": question},
+            {"role": "assistant", "content": solution},
+        ]
+        return self.tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False,continue_final_message=True)
 
     @staticmethod
     def pack_by_tokens(lengths: List[int], max_tokens_per_batch: int, max_seqs_per_batch: int) -> List[List[int]]:
@@ -145,18 +127,13 @@ class AceMathRewardModel:
         return hidden_states[batch_idx, pos]
 
     def _forward_logits(self, enc: dict, *, grad_enabled: bool, model=None) -> torch.Tensor:
-        """Return class-1 logits at the last sentinel position per sequence (shape: B)."""
         m = model if model is not None else self.model
         ctx_amp = torch.cuda.amp.autocast(dtype=torch.bfloat16) if self.device.startswith("cuda") else torch.nullcontext()
         ctx_grad = torch.enable_grad() if grad_enabled else torch.inference_mode()
         with ctx_grad, ctx_amp:
-            out = m(**enc)  # (B, T, 2)
-            logits = out.logits.to(torch.float32)
-            input_ids = enc["input_ids"]
-            pos = last_token_index(input_ids, self.pool_token_id)  # (B,)
-            b = torch.arange(input_ids.size(0), device=logits.device)
-            r = logits[b, pos, 1]  # class-1 logits
-            return r  # (B,)
+            out = m(**enc)
+            logits = out.logits
+            return logits.to(dtype=torch.float32)
 
     def _apply_padding_and_move(self, batch_texts: List[str], pad_to_mult8: bool, grad_enabled: bool) -> torch.Tensor:
         raise NotImplementedError("Deprecated path; not used after refactor")
@@ -228,10 +205,10 @@ class AceMathRewardModel:
                     next_enc = prepare_batch(batches[bi + 1])
             if use_double_buffer:
                 torch.cuda.current_stream().wait_stream(prefetch_stream)
-            logits_model = self._forward_logits(current_enc, grad_enabled=False, model=self.model)  # (B,)
-            logits_ref = self._forward_logits(current_enc, grad_enabled=False, model=self.ref_model)    # (B,)
-            r_model = logits_model.detach().to(dtype=torch.float32, device="cpu")
-            r_ref = logits_ref.detach().to(dtype=torch.float32, device="cpu")
+            logits_model = self._forward_logits(current_enc, grad_enabled=False, model=self.model)
+            logits_ref = self._forward_logits(current_enc, grad_enabled=False, model=self.ref_model)
+            r_model = logits_model[:, 1].detach().to(dtype=torch.float32, device="cpu")
+            r_ref = logits_ref[:, 1].detach().to(dtype=torch.float32, device="cpu")
             for local_i, global_i in enumerate(idxs):
                 qi, kj = meta[global_i]
                 scores_model[qi, kj] = r_model[local_i]
@@ -265,12 +242,12 @@ class AceMathRewardModel:
                 if v.device.type == "cpu":
                     enc[k] = v.pin_memory()
             enc = {k: v.to(self.device, non_blocking=True) for k, v in enc.items()}
-        logits_sorted = self._forward_logits(enc, grad_enabled=True, model=self.model)  # (2B,)
+        logits_sorted = self._forward_logits(enc, grad_enabled=True, model=self.model)  # (2B, C)
         order_tensor = torch.tensor(order, device=logits_sorted.device, dtype=torch.long)
         inv = torch.argsort(order_tensor)
-        original_logits = logits_sorted[inv]  # (2B,)
-        r_pos = original_logits[0::2]
-        r_neg = original_logits[1::2]
+        original_logits = logits_sorted[inv]
+        r_pos = original_logits[0::2, 1]
+        r_neg = original_logits[1::2, 1]
         return r_pos, r_neg
 
     def train_step(self, triplets: List[Tuple[str, str, str]]) -> float:
@@ -317,3 +294,9 @@ class AceMathRewardModel:
 
 def load_reward_model(model_name: str, gpu_id: int, rm_config: Optional[dict] = None, num_steps: Optional[int] = None) -> AceMathRewardModel:
     return AceMathRewardModel(model_name, gpu_id, rm_config, num_steps)
+
+
+def last_token_index(input_ids: torch.Tensor, token_id: int) -> torch.Tensor:
+    mask = (input_ids == token_id)
+    flipped = torch.flip(mask, dims=[1]).int().argmax(dim=1)
+    return (input_ids.shape[1] - 1) - flipped

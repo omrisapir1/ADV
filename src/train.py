@@ -11,12 +11,9 @@ from transformers import AutoTokenizer
 from .prompting import build_prompts
 from .generation import build_sglang_engine
 from .reward_model import load_reward_model
-from .answer_parse import compute_final_correctness, extract_final_answer
+from .answer_parse import compute_final_correctness
 from .llm_trainer import load_llm_trainer
 from .evaluation import run_full_evaluation  # added import
-
-
-# Login using e.g. `huggingface-cli login` to access this dataset
 
 import time
 import re
@@ -345,20 +342,14 @@ async def training_loop(config: Dict[str, Any]):
     gamma = config["train"]["gamma"]
     evaluation_config = config.get("evaluation")
     tmp_weights_path = config.get("tmp_weights_safetensors_path")  # path with potential typo kept as-is
+    url = f"http://localhost:30000/flush_cache"
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
     train_ds, test_ds, q_field, a_field = load_dataset_handle(config)
-    test_ds = load_dataset('omrisap/6K-think-SFT-math')['train']
-
-    # test_ds['final_answer'] =[extract_final_answer(s)[0] for s in test_ds['sol_with_think']]
-    test_ds = test_ds.add_column(
-        "final_answer",
-        [extract_final_answer(s)[0] for s in test_ds["sol_with_think"]]
-    )
     engine = build_sglang_engine(llm_name, generation_config)
 
-    # rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
-    # llm_trainer = load_llm_trainer(llm_name, llm_trainer__gpu, num_steps, llm_trainer_config)
+    rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
+    llm_trainer = load_llm_trainer(llm_name, llm_trainer__gpu, num_steps, llm_trainer_config)
 
     ensure_empty_log_dir(LOG_DIR)
 
@@ -367,12 +358,15 @@ async def training_loop(config: Dict[str, Any]):
     for step in range(num_steps):
 
 
+        if step % llm_trainer_config['update_ref_model_every'] == 0 and step > 0:
+            llm_trainer.update_ref_model()
         if evaluation_config and (step > 0 or evaluation_config['at_start']) and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
-                engine, None, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
+                engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
             )
             print(f"[Eval@Step {step}] {json.dumps(eval_res, indent=2)}")
-            exit(0)
+            response = requests.post(url)
+
         records = get_batch_records(train_ds, batch_size, step)
         questions = [r[q_field] for r in records]
         gold_answers = [r[a_field] for r in records]
@@ -381,7 +375,7 @@ async def training_loop(config: Dict[str, Any]):
 
         raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
         print(f"[Step {step}] Generation time: {time.time() - st:.2f}s")
-        url = f"http://localhost:30000/flush_cache"
+
 
         response = requests.post(url)
         if last_save_task is not None:
