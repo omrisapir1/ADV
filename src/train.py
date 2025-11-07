@@ -171,7 +171,7 @@ def _safe_zscore(x: torch.Tensor) -> torch.Tensor:
     sigma = torch.sqrt(torch.clamp(diff.pow(2).mean(), min=0.0))
     if (not torch.isfinite(sigma)) or sigma < 1e-6:
         return torch.zeros_like(x)
-    return (x - mu) / (sigma + 1e-12)  # small epsilon for numerical stability
+    return (x - mu) / sigma
 
 
 def _normalize_per_question(scores_row: torch.Tensor, mode: str = "z") -> torch.Tensor:
@@ -409,7 +409,7 @@ async def training_loop(config: Dict[str, Any]):
             correctness_tensor[qi, :len(row)] = torch.tensor(row, dtype=torch.int32)
         st = time.time()
 
-        clean_end_candidates(candidates)
+        # clean_end_candidates(candidates)
 
         try:
             rm_scores_model, rm_scores_ref = rm_model.score_reference(questions, candidates, rm_config)

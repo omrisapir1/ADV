@@ -14,9 +14,9 @@ for cur_f in os.listdir(path):
 df = pd.DataFrame(all_jsons)
 
 
-def roc_auc(r):
+def roc_auc(r, col='rm_scores'):
     y_true, y_pred = [], []
-    for c,s in zip(r['questions']['correctness'], r['questions']['rm_scores']):
+    for c,s in zip(r['questions']['correctness'], r['questions'][col]):
         y_true.append(c)
         y_pred.append(s)
     return roc_auc_score(y_true, y_pred)
