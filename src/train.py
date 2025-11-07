@@ -157,11 +157,21 @@ def _safe_minmax(x: torch.Tensor) -> torch.Tensor:
 
 
 def _safe_zscore(x: torch.Tensor) -> torch.Tensor:
-    mu = torch.nanmean(x)
-    sigma = torch.nanstd(x)
+    # Fallback implementation without torch.nanstd (not available in some torch versions)
+    # Treat non-finite values (nan, inf) as missing.
+    if not isinstance(x, torch.Tensor):
+        x = torch.tensor(x)
+    finite_mask = torch.isfinite(x)
+    if finite_mask.sum() == 0:
+        return torch.zeros_like(x)
+    x_finite = x[finite_mask]
+    mu = x_finite.mean()
+    # population standard deviation (consistent with nanstd default)
+    diff = x_finite - mu
+    sigma = torch.sqrt(torch.clamp(diff.pow(2).mean(), min=0.0))
     if (not torch.isfinite(sigma)) or sigma < 1e-6:
         return torch.zeros_like(x)
-    return (x - mu) / sigma
+    return (x - mu) / (sigma + 1e-12)  # small epsilon for numerical stability
 
 
 def _normalize_per_question(scores_row: torch.Tensor, mode: str = "z") -> torch.Tensor:
