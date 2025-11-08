@@ -365,11 +365,14 @@ async def training_loop(config: Dict[str, Any]):
 
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
+    rm_update_interval = rm_config.get("update_ref_model_every")  # new config key
     for step in range(num_steps):
 
-
-        if step % llm_trainer_config['update_ref_model_every'] == 0 and step > 0:
-            llm_trainer.update_ref_model()
+        # Reward model reference refresh
+        if rm_update_interval and step > 0 and step % rm_update_interval == 0:
+            rm_model.update_ref_model()
+            print(f"[RM@Step {step}] Updated reference model.")
+        # LLM trainer reference refresh
         if evaluation_config and (step > 0 or evaluation_config['at_start']) and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
                 engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
@@ -408,8 +411,6 @@ async def training_loop(config: Dict[str, Any]):
         for qi, row in enumerate(correctness_filtered_list):
             correctness_tensor[qi, :len(row)] = torch.tensor(row, dtype=torch.int32)
         st = time.time()
-
-        # clean_end_candidates(candidates)
 
         try:
             rm_scores_model, rm_scores_ref = rm_model.score_reference(questions, candidates, rm_config)

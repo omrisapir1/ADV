@@ -95,6 +95,14 @@ class AceMathRewardModel:
             os.path.join(path, "reward_model.pt"),
         )
 
+    def update_ref_model(self):
+        """Refresh the frozen reference model weights from the current trained model.
+        Keeps params frozen; used when rm_config.update_ref_model_every > 0.
+        """
+        with torch.inference_mode():
+            self.ref_model.load_state_dict(self.model.state_dict())
+        self.ref_model.eval()
+
     def _chat(self, question: str, solution: str):
         msgs = [
             {"role": "system", "content": SYSTEM_PROMPT},

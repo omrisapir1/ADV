@@ -70,6 +70,43 @@ def _percent_ambiguous(correctness: List[List[int]]) -> float:
     return (ambiguous / total)
 
 
+def filter_and_select_mixed(
+    questions: List[str],
+    gold_answers: List[str],
+    candidate_texts: List[List[str]],
+    candidate_valid_flags: List[List[int]],
+    correctness: List[List[int]],
+) -> Tuple[List[str], List[str], List[List[str]], List[List[int]]]:
+    """Replicated from train.py. Remove invalid-but-correct candidates and retain only questions
+    that have mixed correctness (contain both 0 and 1). Returns filtered sets or empty lists if none remain."""
+    filtered_candidate_texts: List[List[str]] = []
+    filtered_correctness: List[List[int]] = []
+    for texts_row, flags_row, corr_row in zip(candidate_texts, candidate_valid_flags, correctness):
+        new_texts: List[str] = []
+        new_corr: List[int] = []
+        for t, f, corr in zip(texts_row, flags_row, corr_row):
+            if corr == -1 or (f == 0 and corr == 1):
+                continue
+            new_texts.append(t)
+            new_corr.append(corr)
+        filtered_candidate_texts.append(new_texts)
+        filtered_correctness.append(new_corr)
+
+    mixed_indices: List[int] = []
+    for i, row in enumerate(filtered_correctness):
+        vals = set(row)
+        if 1 in vals and 0 in vals:
+            mixed_indices.append(i)
+    if not mixed_indices:
+        return [], [], [], []
+
+    questions_f = [questions[i] for i in mixed_indices]
+    gold_answers_f = [gold_answers[i] for i in mixed_indices]
+    candidates_f = [filtered_candidate_texts[i] for i in mixed_indices]
+    correctness_f = [filtered_correctness[i] for i in mixed_indices]
+    return questions_f, gold_answers_f, candidates_f, correctness_f
+
+
 async def evaluate_greedy(engine, test_ds, q_field: str, a_field: str, tokenizer, generation_config: Dict[str, Any], evaluation_config: Dict[str, Any]) -> Dict[str, Any]:
     total = len(test_ds)
     questions = [test_ds[i][q_field] for i in range(total)]
@@ -102,11 +139,13 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
     if batch_size <= 0:
         batch_size = total
 
+    # Accumulate dynamically after filtering rather than preallocating tensors (since counts shrink)
     all_questions: List[str] = []
     all_gold_answers: List[str] = []
     all_candidate_texts: List[List[str]] = []
-    rm_scores = torch.empty(total, n_samples, dtype=torch.float32).fill_(float('nan'))
-    rm_scores_ref = torch.empty(total, n_samples, dtype=torch.float32).fill_(float('nan'))  # new tensor for reference model
+    all_correctness: List[List[int]] = []
+    rm_scores_rows: List[torch.Tensor] = []
+    rm_scores_ref_rows: List[torch.Tensor] = []
 
     for start in range(0, total, batch_size):
         end = min(start + batch_size, total)
@@ -115,49 +154,75 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         prompts = build_prompts(batch_questions, tokenizer)
         raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
         batch_candidate_texts = [[c[0] for c in row] for row in raw_candidates]
-        # Append
-        all_questions.extend(batch_questions)
-        all_gold_answers.extend(batch_gold)
-        all_candidate_texts.extend(batch_candidate_texts)
-        # Reward scoring per batch
-        try:
-            batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config)
-        except Exception as e:
-            print(f"[Eval Sampling] RM scoring exception on batch {start}:{end}: {e}; retry small batch.")
-            torch.cuda.empty_cache()
-            batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config, forced_small_batch_size=True)
-        torch.cuda.empty_cache()
-        b_rows, b_cols = batch_rm_scores_model.shape
-        rm_scores[start:start + b_rows, :b_cols] = batch_rm_scores_model.detach().to(dtype=torch.float32, device='cpu')
-        rm_scores_ref[start:start + b_rows, :b_cols] = batch_rm_scores_ref.detach().to(dtype=torch.float32, device='cpu')  # fill reference scores
-        del batch_rm_scores_model, batch_rm_scores_ref, raw_candidates, batch_candidate_texts
+        batch_valid_flags = [[c[1] for c in row] for row in raw_candidates]
+        batch_correctness = compute_final_correctness(batch_candidate_texts, batch_gold)
 
-    correctness = compute_final_correctness(all_candidate_texts, all_gold_answers)
-    avg_acc = _per_question_accuracy(correctness)
-    avg_auc = _average_auc(rm_scores, correctness)
-    avg_auc_ref = _average_auc(rm_scores_ref, correctness)  # second AUC
-    amb_pct = _percent_ambiguous(correctness)
+        # Apply filtering + mixed selection (new)
+        batch_questions_f, batch_gold_f, batch_candidate_texts_f, batch_correctness_f = filter_and_select_mixed(
+            batch_questions, batch_gold, batch_candidate_texts, batch_valid_flags, batch_correctness
+        )
+        if not batch_questions_f:
+            continue  # no mixed items in this batch
+
+        # Reward scoring on filtered batch
+        try:
+            batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions_f, batch_candidate_texts_f, rm_config)
+        except Exception as e:
+            print(f"[Eval Sampling] RM scoring exception on filtered batch {start}:{end}: {e}; retry small batch.")
+            torch.cuda.empty_cache()
+            batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions_f, batch_candidate_texts_f, rm_config, forced_small_batch_size=True)
+        torch.cuda.empty_cache()
+
+        # Accumulate
+        all_questions.extend(batch_questions_f)
+        all_gold_answers.extend(batch_gold_f)
+        all_candidate_texts.extend(batch_candidate_texts_f)
+        all_correctness.extend(batch_correctness_f)
+        rm_scores_rows.extend([row.detach().cpu() for row in batch_rm_scores_model])
+        rm_scores_ref_rows.extend([row.detach().cpu() for row in batch_rm_scores_ref])
+        del raw_candidates, batch_candidate_texts, batch_valid_flags, batch_rm_scores_model, batch_rm_scores_ref
+
+    if not all_questions:
+        # Return empty-style result if no mixed questions found at all
+        return {
+            'mode': 'sampling',
+            'num_questions': 0,
+            'n_samples_per_question': n_samples,
+            'avg_accuracy': 0.0,
+            'avg_auc': 0.0,
+            'avg_auc_ref': 0.0,
+            'percent_minus_one': 0.0,
+            'note': 'No mixed correctness questions after filtering.'
+        }
+
+    # Build padded tensors for AUC computations
+    max_k = max(len(row) for row in all_candidate_texts)
+    rm_scores = torch.empty(len(all_questions), max_k, dtype=torch.float32).fill_(float('nan'))
+    rm_scores_ref = torch.empty(len(all_questions), max_k, dtype=torch.float32).fill_(float('nan'))
+    for i, (scores_row, scores_ref_row) in enumerate(zip(rm_scores_rows, rm_scores_ref_rows)):
+        k = min(max_k, scores_row.shape[0])
+        rm_scores[i, :k] = scores_row[:k]
+        rm_scores_ref[i, :k] = scores_ref_row[:k]
+
+    avg_acc = _per_question_accuracy(all_correctness)
+    avg_auc = _average_auc(rm_scores, all_correctness)
+    avg_auc_ref = _average_auc(rm_scores_ref, all_correctness)
+    amb_pct = _percent_ambiguous(all_correctness)
 
     # Build and persist a DataFrame with per-question details
     details_rows: List[Dict[str, Any]] = []
     for i, q in enumerate(all_questions):
-        bool_correctness = [v == 1 for v in correctness[i]]
+        bool_correctness = [v == 1 for v in all_correctness[i]]
         details_rows.append({
             'question': q,
             'candidates': all_candidate_texts[i],
-            # user requested column name with typo: correct_inccorect
-            'correct_inccorect': bool_correctness,
-            # keep previous correct spelling as alias for possible downstream use
-            'correct_incorrect': bool_correctness,
+            'correct_inccorect': bool_correctness,  # keeping original column name spelling
             'rm_scores': [float(x) if x == x else None for x in rm_scores[i].tolist()],
-            # user requested rm_rf_scores (interpreted as ref scores); provide both names
             'rm_rf_scores': [float(x) if x == x else None for x in rm_scores_ref[i].tolist()],
-            'rm_ref_scores': [float(x) if x == x else None for x in rm_scores_ref[i].tolist()],
         })
-    # DataFrame will include all columns; user-specified ordering first
+
     df = pd.DataFrame(details_rows, columns=[
         'question', 'candidates', 'correct_inccorect', 'rm_scores', 'rm_rf_scores',
-        'correct_incorrect', 'rm_ref_scores'
     ])
     os.makedirs('evaluation_logs', exist_ok=True)
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -165,7 +230,6 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
     try:
         df.to_parquet(df_path, index=False)
     except Exception:
-        # fallback to csv if parquet engine unavailable
         df_path = os.path.join('evaluation_logs', f'sampling_details_{ts}.csv')
         df.to_csv(df_path, index=False)
 
