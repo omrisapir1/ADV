@@ -113,7 +113,7 @@ class AsyncSGLangEngineWrapper:
         think_max_new_tokens = gen_cfg.get("think_max_new_tokens")
         answer_max_new_tokens = gen_cfg.get("answer_max_new_tokens")
         answer_stop = gen_cfg.get("answer_stop")
-        TIMEOUT_SEC = gen_cfg.get("timeout", 180)
+        TIMEOUT_SEC = gen_cfg.get("timeout", 280)
         tasks = []
         for p in prompts:
             coro = self._two_phase_for_one_prompt(
