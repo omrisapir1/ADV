@@ -161,10 +161,14 @@ class AceMathRewardModel:
         meta: List[Tuple[int, int]] = []  # (qi, kj)
         max_k = 0
         for qi, (q, cand_list) in enumerate(zip(questions, candidates_by_q)):
+            if qi==0:
+                print(f"Q: {q}\nCand: {cand_list}\n")
             cand_list = [self.clear_solution(s) for s in cand_list]
             max_k = max(max_k, len(cand_list))
             for kj, sol in enumerate(cand_list):
                 text = self._chat(q, sol)
+                if qi == 0 and kj == 0:
+                    print(f"this is text: {text}\n")
                 texts.append(text)
                 meta.append((qi, kj))
         if not texts:
@@ -225,7 +229,7 @@ class AceMathRewardModel:
         return scores_model, scores_ref
 
     # -------------------- Pair scoring (pos/neg) --------------------
-    def score_pairs(self, questions: List[str], solutions_pos: List[str], solutions_neg: List[str], rm_config: Optional[dict] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def score_pairs(self, questions: List[str], solutions_pos: List[str], solutions_neg: List[str], rm_config: Optional[dict] = None, to_print=False) -> Tuple[torch.Tensor, torch.Tensor]:
         rm_config = rm_config if rm_config is not None else self.rm_config
         pad_to_mult8 = bool(rm_config.get("pad_to_multiple_of_8"))
         solutions_pos = [self.clear_solution(s) for s in solutions_pos]
@@ -234,6 +238,8 @@ class AceMathRewardModel:
         for q, p, n in zip(questions, solutions_pos, solutions_neg):
             texts.append(self._chat(q, p))
             texts.append(self._chat(q, n))
+            if to_print:
+                print(f"Q: {q}\nPos: {p}\nNeg: {n}\n")
         prelim = self.tokenizer(texts, padding=False, truncation=True)
         lengths = [len(ids) for ids in prelim["input_ids"]]
         order = sorted(range(len(texts)), key=lambda i: lengths[i], reverse=True)
@@ -268,12 +274,13 @@ class AceMathRewardModel:
         accum_steps = self.grad_accum
         self.optimizer.zero_grad(set_to_none=True)
         for start in range(0, len(triplets), batch_size):
+
             end = min(start + batch_size, len(triplets))
             batch = triplets[start:end]
-            batch_q = [t[0] for t in batch]
-            batch_pos = [self.clear_solution(t[1]) for t in batch]
-            batch_neg = [self.clear_solution(t[2]) for t in batch]
-            r_pos, r_neg = self.score_pairs(batch_q, batch_pos, batch_neg, self.rm_config)
+            if start == 0:
+                print(f"This is frist batch ---{}")
+            batch_q, batch_pos, batch_neg = zip(*batch)
+            r_pos, r_neg = self.score_pairs(batch_q, batch_pos, batch_neg, self.rm_config, start==0)
             loss_full = pairwise_rm_loss(r_pos, r_neg)
             total_loss += loss_full.detach().item()
             num_batches += 1

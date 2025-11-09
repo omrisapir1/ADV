@@ -245,8 +245,6 @@ def choose_pos_neg_triplets(
 
         triplets_for_rm.append((q, cand_list[rm_pos_j], cand_list[rm_neg_j]))
         triplets_for_llm.append((q, cand_list[llm_pos_j], cand_list[llm_neg_j]))
-    print(f'First triplet for rm {triplets_for_rm[0]}')
-    print(f'First triplet for lm {triplets_for_llm[0]}')
     return triplets_for_rm, triplets_for_llm
 
 
