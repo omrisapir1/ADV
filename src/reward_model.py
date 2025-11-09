@@ -278,7 +278,7 @@ class AceMathRewardModel:
             end = min(start + batch_size, len(triplets))
             batch = triplets[start:end]
             if start == 0:
-                print(f"This is frist batch ---{}")
+                print(f"This is frist batch ---{batch}")
             batch_q, batch_pos, batch_neg = zip(*batch)
             r_pos, r_neg = self.score_pairs(batch_q, batch_pos, batch_neg, self.rm_config, start==0)
             loss_full = pairwise_rm_loss(r_pos, r_neg)
