@@ -238,8 +238,9 @@ class AceMathRewardModel:
         for q, p, n in zip(questions, solutions_pos, solutions_neg):
             texts.append(self._chat(q, p))
             texts.append(self._chat(q, n))
-            if to_print:
-                print(f"Q: {q}\nPos: {p}\nNeg: {n}\n")
+        if to_print:
+            print(f'Pos {texts[0]}')
+            print(f'Neg {texts[0]}')
         prelim = self.tokenizer(texts, padding=False, truncation=True)
         lengths = [len(ids) for ids in prelim["input_ids"]]
         order = sorted(range(len(texts)), key=lambda i: lengths[i], reverse=True)
