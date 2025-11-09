@@ -55,7 +55,7 @@ train:
   batch_size: 24
   n_samples_per_problem: 124
   num_steps: 10000
-  gamma: 0.0
+  gamma: 1.0
 
 
 llm_trainer:
