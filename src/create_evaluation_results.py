@@ -38,7 +38,7 @@ def load_config(path: str) -> EvalSettings:
     dataset_name = dcfg["name"]
     q_field = dcfg.get("field_question", "problem")
     a_field = dcfg.get("field_answer", "final_answer")
-    split = dcfg.get("split", "test")  # prefer test split for evaluation
+    split = 'test'
     n_samples = 124
     batch_size = 16
     generation_cfg = cfg.get("generation")
