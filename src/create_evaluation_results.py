@@ -66,9 +66,9 @@ def load_testset(dataset_name: str, split: str):
     return ds[split]
 
 
-def select_records(ds, q_field: str, a_field: str, max_questions: Optional[int]):
+def select_records(ds, q_field: str, a_field: str,):
     total = len(ds)
-    use_n = max_questions if (max_questions and max_questions > 0) else total
+    use_n = total
     use_n = min(use_n, total)
     records = [ds[i] for i in range(use_n)]
     questions = [r[q_field] for r in records]
@@ -101,7 +101,7 @@ async def run():
     settings = load_config(CONFIG_PATH)
     print(f"Loaded config for model={settings.llm_name} dataset={settings.dataset_name} split={settings.split}")
     test_ds = load_testset(settings.dataset_name, settings.split)
-    questions, gold_answers = select_records(test_ds, settings.q_field, settings.a_field, settings.max_questions)
+    questions, gold_answers = select_records(test_ds, settings.q_field, settings.a_field)
     print(f"Evaluating {len(questions)} questions with {settings.n_samples} samples each (batch_size={settings.batch_size})")
     tokenizer = AutoTokenizer.from_pretrained(settings.llm_name)
     engine = build_sglang_engine(settings.llm_name, settings.generation_cfg)
