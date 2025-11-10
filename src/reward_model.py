@@ -229,7 +229,7 @@ class AceMathRewardModel:
         return scores_model, scores_ref
 
     # -------------------- Pair scoring (pos/neg) --------------------
-    def score_pairs(self, questions: List[str], solutions_pos: List[str], solutions_neg: List[str], rm_config: Optional[dict] = None, to_print=False) -> Tuple[torch.Tensor, torch.Tensor]:
+    def score_pairs(self, questions: List[str], solutions_pos: List[str], solutions_neg: List[str], rm_config: Optional[dict] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         rm_config = rm_config if rm_config is not None else self.rm_config
         pad_to_mult8 = bool(rm_config.get("pad_to_multiple_of_8"))
         solutions_pos = [self.clear_solution(s) for s in solutions_pos]
@@ -238,9 +238,6 @@ class AceMathRewardModel:
         for q, p, n in zip(questions, solutions_pos, solutions_neg):
             texts.append(self._chat(q, p))
             texts.append(self._chat(q, n))
-        if to_print:
-            print(f'Pos {texts[0]}')
-            print(f'Neg {texts[0]}')
         prelim = self.tokenizer(texts, padding=False, truncation=True)
         lengths = [len(ids) for ids in prelim["input_ids"]]
         order = sorted(range(len(texts)), key=lambda i: lengths[i], reverse=True)
@@ -278,8 +275,6 @@ class AceMathRewardModel:
 
             end = min(start + batch_size, len(triplets))
             batch = triplets[start:end]
-            if start == 0:
-                print(f"This is frist batch ---{batch}")
             batch_q, batch_pos, batch_neg = zip(*batch)
             r_pos, r_neg = self.score_pairs(batch_q, batch_pos, batch_neg, self.rm_config, start==0)
             loss_full = pairwise_rm_loss(r_pos, r_neg)
