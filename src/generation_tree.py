@@ -59,10 +59,8 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
 
     def _compute_entropy(self, top_logprob_items: List[Any]) -> Tuple[float, List[Tuple[str, float]]]:
         probs: List[Tuple[str, float]] = []
-        for itm in top_logprob_items:
-            print(itm)
-            token = itm['token']
-            lp = itm['logprob']
+        # print(top_logprob_items)
+        for token, lp in top_logprob_items[0].items():
             p = math.exp(lp)
             probs.append((token, p))
         if not probs:
@@ -118,6 +116,9 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                         top_logprobs = getattr(content_list[0], "top_logprobs", []) or []
                 elif isinstance(logprobs_obj, dict):
                     top_logprobs = logprobs_obj.get("top_logprobs", []) or []
+            print("---------")
+            print(top_logprobs)
+            print("---------")
             entropy, norm_probs = self._compute_entropy(top_logprobs)
             token_count += 1
             if entropy > think_entropy_threshold and norm_probs and THINK_STOP not in accumulated:
