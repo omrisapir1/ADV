@@ -87,11 +87,10 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                 prompt=prompt,
                 n=1,
                 stream=True,
-                logprobs=True,
+                logprobs=5,
                 temperature=0.7,
                 top_p=0.7,
                 max_tokens=think_max_new_tokens,
-                top_logprobs=5,
                 stop=[THINK_STOP],
                 extra_body={"top_k": 40},
             )
