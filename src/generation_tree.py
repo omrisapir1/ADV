@@ -60,8 +60,9 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
     def _compute_entropy(self, top_logprob_items: List[Any]) -> Tuple[float, List[Tuple[str, float]]]:
         probs: List[Tuple[str, float]] = []
         for itm in top_logprob_items:
-            token = itm.token
-            lp = itm.logprob
+            print(itm)
+            token = itm['token']
+            lp = itm['logprob']
             p = math.exp(lp)
             probs.append((token, p))
         if not probs:
@@ -100,7 +101,6 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
         token_count = 0
         accumulated = node.think
         async for event in stream:
-            print(event)
             choice = event.choices[0]
             finish_reason = getattr(choice, "finish_reason", None)
             text = getattr(choice, "text", "") or ""
