@@ -33,7 +33,7 @@ dataset:
   field_answer: final_answer
 
 generation:
-  max_concurrency: 16
+  max_concurrency: 64
 
   # ---- Phase 1 (thinking) ----
   think_temperature: 1.3

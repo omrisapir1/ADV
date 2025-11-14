@@ -5,6 +5,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Tuple, Deque
 from collections import deque
+import time
 
 THINK_STOP = "</think>"
 
@@ -53,14 +54,14 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
         api_key = sglang_config.get("api_key", "EMPTY")
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         self.model_name = model_name
-        self._semaphore = asyncio.Semaphore(int(sglang_config.get("max_concurrency", 4)))
+        self._semaphore = asyncio.Semaphore(int(sglang_config.get("max_concurrency", 32)))
         self.max_retries = int(sglang_config.get("max_retries", 3))
         self.retry_sleep = float(sglang_config.get("retry_sleep", 5.0))
 
-    def _compute_entropy(self, top_logprob_items: List[Any]) -> Tuple[float, List[Tuple[str, float]]]:
+    def _compute_entropy(self, top_logprob_items: dict) -> Tuple[float, List[Tuple[str, float]]]:
         probs: List[Tuple[str, float]] = []
-        # print(top_logprob_items)
-        for token, lp in top_logprob_items[0].items():
+
+        for token, lp in top_logprob_items.items():
             p = math.exp(lp)
             probs.append((token, p))
         if not probs:
@@ -70,7 +71,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
         entropy = -sum(p * math.log(p + 1e-12) for _, p in norm)
         return entropy, norm
 
-    async def _stream_one_think(self, node: _Node, *, think_entropy_threshold: float, token_prob_threshold: float, think_max_new_tokens: int) -> Tuple[List[_Node], Optional[str]]:
+    async def _stream_one_think(self, node: _Node, *, think_entropy_threshold: float, token_prob_threshold: float, think_max_new_tokens: int,min_tokens_split: int) -> Tuple[List[_Node], Optional[str]]:
         """Stream think phase for a single node until branch or THINK_STOP or budget.
 
         Returns (children_nodes, finished_think_text or None).
@@ -78,75 +79,99 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
           - THINK_STOP encountered => finished_think_text (think without stop).
           - budget exhausted => finished_think_text current think (no stop) to treat as think-only.
         """
-        # Use completions with prompt instead of chat messages.
+        t0 = time.time()
+        print(f"[{time.strftime('%H:%M:%S')}] START think node depth={node.depth} len(ctx)={len(node.ctx)}")
+
         prompt = node.ctx + node.think
+        # Acquire semaphore only for the remote streaming call
         try:
-            stream = await self.client.completions.create(
-                model=self.model_name,
-                prompt=prompt,
-                n=1,
-                stream=True,
-                logprobs=5,
-                temperature=0.7,
-                top_p=0.7,
-                max_tokens=think_max_new_tokens,
-                stop=[THINK_STOP],
-                extra_body={"top_k": 40},
-            )
+            async with self._semaphore:
+                stream = await self.client.completions.create(
+                    model=self.model_name,
+                    prompt=prompt,
+                    n=1,
+                    stream=True,
+                    logprobs=5,
+                    temperature=0.7,
+                    top_p=0.7,
+                    max_tokens=think_max_new_tokens,
+                    # stop=[THINK_STOP],
+                    extra_body={"top_k": 40},
+                )
         except Exception as e:
             print(f"[Tree] Stream start error: {e}")
             return [], node.think
         token_count = 0
         accumulated = node.think
         async for event in stream:
+            print(f"[{time.strftime('%H:%M:%S')}] event recv node={node.depth} type={getattr(event, 'type', None)}")
             choice = event.choices[0]
             finish_reason = getattr(choice, "finish_reason", None)
-            text = getattr(choice, "text", "") or ""
-            prefix_before_token = accumulated
-            accumulated += text
-            # Extract top logprobs; completions may expose choice.logprobs.top_logprobs OR content[0].top_logprobs
-            top_logprobs = []
             logprobs_obj = getattr(choice, "logprobs", None)
+            tokens_list: List[str] = []
+            top_logprobs_list: List[dict] = []
             if logprobs_obj is not None:
-                if hasattr(logprobs_obj, "top_logprobs"):
-                    top_logprobs = getattr(logprobs_obj, "top_logprobs", []) or []
-                elif hasattr(logprobs_obj, "content"):
-                    content_list = getattr(logprobs_obj, "content", [])
-                    if content_list:
-                        top_logprobs = getattr(content_list[0], "top_logprobs", []) or []
+                if hasattr(logprobs_obj, "tokens") and hasattr(logprobs_obj, "top_logprobs"):
+                    try:
+                        tokens_list = list(getattr(logprobs_obj, "tokens") or [])
+                        top_logprobs_list = list(getattr(logprobs_obj, "top_logprobs") or [])
+                    except Exception:
+                        pass
                 elif isinstance(logprobs_obj, dict):
-                    top_logprobs = logprobs_obj.get("top_logprobs", []) or []
-            print("---------")
-            print(top_logprobs)
-            print("---------")
-            entropy, norm_probs = self._compute_entropy(top_logprobs)
-            token_count += 1
-            if entropy > think_entropy_threshold and norm_probs and THINK_STOP not in accumulated:
-                children: List[_Node] = []
-                for i, (tok, prob) in enumerate(norm_probs):
-                    if (prob >= token_prob_threshold and i < MAX_SPLIT) or i < MIN_SPLIT:
-                        children.append(_Node(ctx=node.ctx, think=prefix_before_token + tok, depth=node.depth + 1))
-                if children:
-                    return children, None
-            if THINK_STOP in accumulated:
-                return [], accumulated
+                    if "tokens" in logprobs_obj and isinstance(logprobs_obj.get("tokens"), list):
+                        tokens_list = logprobs_obj.get("tokens") or []
+                        top_logprobs_list = logprobs_obj.get("top_logprobs") or []
+            if len(top_logprobs_list) != len(tokens_list):
+                raise RuntimeError("len(top_logprobs_list) != len(tokens_list)")
+            for tok_idx, token_str in enumerate(tokens_list):
+                if token_count >= think_max_new_tokens:
+                    print('Because of stop (budget mid-event)')
+                    return [], accumulated
+                prefix_before_token = accumulated
+                accumulated += token_str
+                entropy = 0.0
+                norm_probs: List[Tuple[str, float]] = []
+                top_lp_dict = top_logprobs_list[tok_idx] if tok_idx < len(top_logprobs_list) else {}
+                if isinstance(top_lp_dict, dict) and top_lp_dict:
+                    entropy, norm_probs = self._compute_entropy(top_lp_dict)
+                token_count += 1
+                if entropy > think_entropy_threshold and norm_probs and THINK_STOP not in accumulated and token_count >= min_tokens_split:
+                    print('Because of entropy')
+                    children: List[_Node] = []
+                    for i, (tok_candidate, prob) in enumerate(norm_probs):
+                        if (prob >= token_prob_threshold and i < MAX_SPLIT) or i < MIN_SPLIT:
+                            print(f"split {i}")
+                            children.append(_Node(ctx=node.ctx, think=prefix_before_token + tok_candidate, depth=node.depth + 1))
+                    if children:
+                        print(
+                            f"[{time.strftime('%H:%M:%S')}] END think node depth={node.depth} took {time.time() - t0:.2f}s -> tokens={token_count} has children")
+                        return children, None
+                # if THINK_STOP in accumulated:
+                #     print('Because of think stop')
+                #     return [], accumulated
             if finish_reason == "stop" or token_count >= think_max_new_tokens:
+                print('Because of stop (event finished)')
+                print(f"[{time.strftime('%H:%M:%S')}] END think node depth={node.depth} took {time.time() - t0:.2f}s -> tokens={token_count}")
+
                 return [], accumulated
+        print(f"[{time.strftime('%H:%M:%S')}] END think node depth={node.depth} took {time.time() - t0:.2f}s -> tokens={token_count} final")
+
         return [], accumulated
 
     async def _greedy_answer(self, base_prompt_plus_think: str, answer_max_new_tokens: int, answer_stop: Optional[List[str]]) -> str:
         prompt = base_prompt_plus_think + THINK_STOP
         for attempt in range(self.max_retries):
             try:
-                resp = await self.client.completions.create(
-                    model=self.model_name,
-                    prompt=prompt,
-                    n=1,
-                    temperature=0.0,
-                    top_p=1.0,
-                    max_tokens=answer_max_new_tokens,
-                    stop=answer_stop if answer_stop else None,
-                )
+                async with self._semaphore:
+                    resp = await self.client.completions.create(
+                        model=self.model_name,
+                        prompt=prompt,
+                        n=1,
+                        temperature=0.0,
+                        top_p=1.0,
+                        max_tokens=answer_max_new_tokens,
+                        stop=answer_stop if answer_stop else None,
+                    )
                 choice = resp.choices[0] if resp.choices else None
                 if choice is None:
                     return ""
@@ -159,85 +184,97 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                 await asyncio.sleep(self.retry_sleep)
         return ""
 
-    async def generate_candidates(self, prompts: List[str], n_samples: int, **gen_cfg: Any) -> List[List[tuple[str, int]]]:
-        think_entropy_threshold = gen_cfg.get("think_entropy_threshold", 3.0)
-        token_prob_threshold = gen_cfg.get("token_prob_threshold", 0.20)
+    async def generate_candidates(self, prompts: List[str], **gen_cfg: Any) -> List[List[tuple[str, int]]]:
+        think_entropy_threshold = gen_cfg.get("think_entropy_threshold", 0.4)
+        token_prob_threshold = gen_cfg.get("token_prob_threshold", 0.10)
         think_max_new_tokens = gen_cfg.get("think_max_new_tokens")
         answer_max_new_tokens = gen_cfg.get("answer_max_new_tokens")
         answer_stop = gen_cfg.get("answer_stop")
         max_depth = int(gen_cfg.get("max_depth", 2))
         max_nodes = int(gen_cfg.get("max_nodes", 10))
-        node_parallel_limit = int(gen_cfg.get("node_parallel_limit", 4))
+        node_parallel_limit = int(gen_cfg.get("node_parallel_limit", 400))
         if think_max_new_tokens is None or answer_max_new_tokens is None:
             raise ValueError("think_max_new_tokens and answer_max_new_tokens must be provided in gen_cfg")
 
         async def _process_prompt(p: str) -> List[tuple[str, int]]:
-            async with self._semaphore:
-                results: List[tuple[str, int]] = []
-                queue: Deque[_Node] = deque([_Node(ctx=p, think="", depth=0)])
-                nodes_processed = 0
-                while queue and len(results) < n_samples and nodes_processed < max_nodes:
-                    # Build a batch of nodes to expand in parallel
-                    batch: List[_Node] = []
-                    while queue and len(batch) < node_parallel_limit:
-                        batch.append(queue.popleft())
-                    # Filter out over-depth nodes early
-                    valid_batch = [n for n in batch if n.depth <= max_depth]
-                    nodes_processed += len(valid_batch)
-                    # Launch expansions concurrently
-                    expand_tasks = [
-                        asyncio.create_task(
-                            self._stream_one_think(
-                                n,
-                                think_entropy_threshold=think_entropy_threshold,
-                                token_prob_threshold=token_prob_threshold,
-                                think_max_new_tokens=think_max_new_tokens,
-                            )
-                        ) for n in valid_batch
-                    ]
-                    if not expand_tasks:
+            results: List[tuple[str, int]] = []
+            queue: Deque[_Node] = deque([_Node(ctx=p, think="", depth=0)])
+            nodes_started = 0  # count nodes whose think phase we began
+            pending_answer_tasks: List[asyncio.Task] = []
+            pending_answer_meta: List[Tuple[int, str]] = []
+            # Active tasks paired with originating node
+            active: List[Tuple[asyncio.Task, _Node]] = []
+            while queue or active:
+                # Refill active tasks up to parallel limit
+                while queue and len(active) < node_parallel_limit and nodes_started < max_nodes:
+                    node = queue.popleft()
+                    nodes_started += 1
+                    # Adjust entropy threshold after hitting max_nodes to prevent further branching
+                    eff_entropy_threshold = think_entropy_threshold if nodes_started < max_nodes else 9999
+                    task = asyncio.create_task(
+                        self._stream_one_think(
+                            node,
+                            think_entropy_threshold=eff_entropy_threshold,
+                            token_prob_threshold=token_prob_threshold,
+                            think_max_new_tokens=think_max_new_tokens,
+                            min_tokens_split=25,
+                        )
+                    )
+                    active.append((task, node))
+                if not active:
+                    break
+                # Wait for first completed think expansion
+                print(f"[{time.strftime('%H:%M:%S')}] waiting on {len(active)} active tasks ...")
+
+                done, pending = await asyncio.wait([t for t, _ in active], return_when=asyncio.FIRST_COMPLETED)
+                print(f"[{time.strftime('%H:%M:%S')}] got {len(done)} finished, {len(pending)} pending")
+
+                for finished in done:
+                    # Locate node
+                    idx = next((i for i, (t, _) in enumerate(active) if t is finished), None)
+                    if idx is None:
                         continue
-                    expand_results = await asyncio.gather(*expand_tasks)
-                    answer_tasks: List[asyncio.Task] = []
-                    answer_task_meta: List[Tuple[int, str]] = []  # (result_index, think_clean)
-                    # Process each expansion
-                    for node_obj, (children, finished_think) in zip(valid_batch, expand_results):
-                        if len(results) >= n_samples:
-                            break
-                        if children:  # enqueue children for future parallel expansion
-                            for c in children:
-                                if c.depth <= max_depth:
-                                    queue.append(c)
-                            continue
-                        if finished_think is None:
-                            continue
-                        has_stop = THINK_STOP in finished_think
-                        if has_stop:
-                            think_clean = finished_think.split(THINK_STOP, 1)[0]
-                            # Defer greedy answer (parallelize)
-                            answer_tasks.append(asyncio.create_task(
-                                self._greedy_answer(
-                                    node_obj.ctx + think_clean,
-                                    answer_max_new_tokens=answer_max_new_tokens,
-                                    answer_stop=answer_stop,
-                                )
-                            ))
-                            answer_task_meta.append((len(results), think_clean))
-                            # Placeholder; will replace after answers return
-                            results.append((think_clean + THINK_STOP + "", 1))
-                        else:
-                            results.append((finished_think, 0))
-                        if len(results) >= n_samples:
-                            break
-                    # Wait for all answer decodes for this batch, then fill them in
-                    if answer_tasks:
-                        answers = await asyncio.gather(*answer_tasks)
-                        for (res_idx, think_clean), ans in zip(answer_task_meta, answers):
-                            full_text = think_clean + THINK_STOP + (ans or "")
-                            results[res_idx] = (full_text, 1)
-                if len(results) < n_samples:
-                    results.extend([("", 0)] * (n_samples - len(results)))
-                return results[:n_samples]
+                    node_obj = active[idx][1]
+                    try:
+                        children, finished_think = finished.result()
+                    except Exception as e:
+                        print(f"[Tree] Think task error: {e}")
+                        children, finished_think = [], None
+                    # Remove from active
+                    del active[idx]
+                    # Handle branching
+                    if children:
+                        for c in children:
+                            if c.depth <= max_depth:
+                                queue.append(c)
+                        continue
+                    if finished_think is None:
+                        continue
+                    if False:#THINK_STOP in finished_think:
+                        think_clean = finished_think.split(THINK_STOP, 1)[0]
+                        # Schedule answer decode (pipelined)
+                        pending_answer_tasks.append(asyncio.create_task(
+                            self._greedy_answer(
+                                node_obj.ctx + think_clean,
+                                answer_max_new_tokens=answer_max_new_tokens,
+                                answer_stop=answer_stop,
+                            )
+                        ))
+                        pending_answer_meta.append((len(results), think_clean))
+                        results.append((think_clean + THINK_STOP + "", 1))
+                    else:
+                        results.append((finished_think, 0))
+                # Loop continues; newly enqueued children will be scheduled next iteration without waiting for slow tasks
+            # Resolve all answer decodes
+            if pending_answer_tasks:
+                answers = await asyncio.gather(*pending_answer_tasks)
+                for (res_idx, think_clean), ans in zip(pending_answer_meta, answers):
+                    full_text = think_clean + THINK_STOP + (ans or "")
+                    results[res_idx] = (full_text, 1)
+            print(
+                f"[{time.strftime('%H:%M:%S')}] loop stats queue={len(queue)} active={len(active)} results={len(results)}")
+
+            return results
         tasks = [asyncio.create_task(_process_prompt(p)) for p in prompts]
         return await asyncio.gather(*tasks)
 
