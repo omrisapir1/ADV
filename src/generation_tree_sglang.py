@@ -150,7 +150,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                     and entropy > ent_thresh
                     and token_count >= min_split_tokens
                     and norm_probs
-                ):
+                ) or (node.depth ==0 and token_count==1):
                     node.depth += 1
                     token_count = 0
                     # Build children: ONLY alternative tokens (parent continues with last_token itself)
@@ -163,7 +163,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                         children: List[_Node] = []
 
                         for i, (tok_candidate, prob) in enumerate(alt_candidates):
-                            if (prob >= prob_thresh and i < MAX_SPLIT) or i < MIN_SPLIT:
+                            if (prob >= prob_thresh and i < MAX_SPLIT) or i < (MIN_SPLIT + int(node.depth ==0) ):
 
                                 children.append(
                                     _Node(
@@ -184,7 +184,6 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
 
     # --------------- answer phase (unchanged) ---------------
     async def _greedy_answer(self, base_prompt_plus_think: str, answer_max_new_tokens: int, answer_stop: Optional[List[str]]) -> str:
-        print('Doing greedy answer')
         prompt = base_prompt_plus_think + THINK_STOP
         for attempt in range(self.max_retries):
             try:
@@ -227,7 +226,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
         think_max_new_tokens = gen_cfg.get("think_max_new_tokens")
         answer_max_new_tokens = gen_cfg.get("answer_max_new_tokens")
         answer_stop = gen_cfg.get("answer_stop")
-        max_depth = int(gen_cfg.get("max_depth", 6))
+        max_depth = int(gen_cfg.get("max_depth", 7))
         if think_max_new_tokens is None or answer_max_new_tokens is None:
             raise ValueError("think_max_new_tokens and answer_max_new_tokens must be provided in gen_cfg")
 
@@ -305,7 +304,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                     results[res_idx] = (full_text, 1)
             return results
 
-        tasks = [asyncio.create_task(_process_prompt(p)) for p in prompts[:5]]
+        tasks = [asyncio.create_task(_process_prompt(p)) for p in prompts]
         return await asyncio.gather(*tasks)
 
 
