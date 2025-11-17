@@ -99,8 +99,8 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                     n=1,
                     stream=True,
                     logprobs=5,
-                    temperature=1.3,
-                    top_p=0.96,
+                    temperature=0.7,
+                    top_p=0.7,
                     stop=[THINK_STOP],
                     max_tokens=think_max_new_tokens,
                     extra_body={"top_k": 40},
@@ -144,7 +144,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                 ent_thresh = param_set.get("entropy_threshold", 9999.0)
                 prob_thresh = param_set.get("token_prob_threshold", token_prob_floor)
                 min_split_tokens = param_set.get("min_tokens_split", min_global_tokens_split)
-                print(max_depth)
+
                 if (
                     node.depth < max_depth
                     and entropy > ent_thresh
@@ -184,6 +184,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
 
     # --------------- answer phase (unchanged) ---------------
     async def _greedy_answer(self, base_prompt_plus_think: str, answer_max_new_tokens: int, answer_stop: Optional[List[str]]) -> str:
+        print('Doing greedy answer')
         prompt = base_prompt_plus_think + THINK_STOP
         for attempt in range(self.max_retries):
             try:
@@ -218,9 +219,9 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
 
         # Simplified: always one param_set derived from legacy params; removed split_param_sets support
         param_set = {
-            "entropy_threshold": legacy_entropy if legacy_entropy is not None else 0.6,
+            "entropy_threshold": legacy_entropy if legacy_entropy is not None else 0.5,
             "token_prob_threshold": legacy_prob if legacy_prob is not None else 0.10,
-            "min_tokens_split": legacy_min_split if legacy_min_split is not None else 25,
+            "min_tokens_split": legacy_min_split if legacy_min_split is not None else 20,
         }
 
         think_max_new_tokens = gen_cfg.get("think_max_new_tokens")
@@ -304,7 +305,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                     results[res_idx] = (full_text, 1)
             return results
 
-        tasks = [asyncio.create_task(_process_prompt(p)) for p in prompts]
+        tasks = [asyncio.create_task(_process_prompt(p)) for p in prompts[:5]]
         return await asyncio.gather(*tasks)
 
 
