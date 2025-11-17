@@ -12,10 +12,12 @@ try:
     from .prompting import build_prompts
     from .answer_parse import compute_final_correctness
     from .generation import build_sglang_engine
+    from .generation_tree_sglang import build_tree_sglang_engine
 except ImportError:
     from prompting import build_prompts
     from answer_parse import compute_final_correctness
     from generation import build_sglang_engine
+    from generation_tree_sglang import build_tree_sglang_engine
 
 CONFIG_PATH = os.environ.get("ADV_CONFIG", "configs/config.yaml")
 
@@ -105,7 +107,7 @@ async def run():
     questions, gold_answers = select_records(test_ds, settings.q_field, settings.a_field)
     print(f"Evaluating {len(questions)} questions with {settings.n_samples} samples each (batch_size={settings.batch_size})")
     tokenizer = AutoTokenizer.from_pretrained(settings.llm_name)
-    engine = build_sglang_engine(settings.llm_name, settings.generation_cfg)
+    engine = build_tree_sglang_engine(settings.llm_name, settings.generation_cfg)
     st = time.time()
     rows = await generate_all(engine, tokenizer, questions, gold_answers, settings.n_samples, settings.generation_cfg, settings.batch_size)
     print(f"Generation time: {time.time() - st:.2f}s")
@@ -115,3 +117,4 @@ async def run():
 
 if __name__ == "__main__":
     asyncio.run(run())
+

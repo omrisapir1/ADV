@@ -5,7 +5,6 @@ import asyncio
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Tuple, Deque
 from collections import deque
-import time
 
 THINK_STOP = "</think>"
 
@@ -54,7 +53,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
         api_key = sglang_config.get("api_key", "EMPTY")
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         self.model_name = model_name
-        self._semaphore = asyncio.Semaphore(int(sglang_config.get("max_concurrency", 32)))
+        self._semaphore = asyncio.Semaphore(int(sglang_config.get("max_concurrency", 4)))
         self.max_retries = int(sglang_config.get("max_retries", 3))
         self.retry_sleep = float(sglang_config.get("retry_sleep", 5.0))
 
@@ -79,9 +78,6 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
           - THINK_STOP encountered => finished_think_text (think without stop).
           - budget exhausted => finished_think_text current think (no stop) to treat as think-only.
         """
-        t0 = time.time()
-        print(f"[{time.strftime('%H:%M:%S')}] START think node depth={node.depth} len(ctx)={len(node.ctx)}")
-
         prompt = node.ctx + node.think
         # Acquire semaphore only for the remote streaming call
         try:
@@ -104,7 +100,6 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
         token_count = 0
         accumulated = node.think
         async for event in stream:
-            print(f"[{time.strftime('%H:%M:%S')}] event recv node={node.depth} type={getattr(event, 'type', None)}")
             choice = event.choices[0]
             finish_reason = getattr(choice, "finish_reason", None)
             logprobs_obj = getattr(choice, "logprobs", None)
@@ -143,19 +138,13 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                             print(f"split {i}")
                             children.append(_Node(ctx=node.ctx, think=prefix_before_token + tok_candidate, depth=node.depth + 1))
                     if children:
-                        print(
-                            f"[{time.strftime('%H:%M:%S')}] END think node depth={node.depth} took {time.time() - t0:.2f}s -> tokens={token_count} has children")
                         return children, None
                 # if THINK_STOP in accumulated:
                 #     print('Because of think stop')
                 #     return [], accumulated
             if finish_reason == "stop" or token_count >= think_max_new_tokens:
                 print('Because of stop (event finished)')
-                print(f"[{time.strftime('%H:%M:%S')}] END think node depth={node.depth} took {time.time() - t0:.2f}s -> tokens={token_count}")
-
                 return [], accumulated
-        print(f"[{time.strftime('%H:%M:%S')}] END think node depth={node.depth} took {time.time() - t0:.2f}s -> tokens={token_count} final")
-
         return [], accumulated
 
     async def _greedy_answer(self, base_prompt_plus_think: str, answer_max_new_tokens: int, answer_stop: Optional[List[str]]) -> str:
@@ -192,7 +181,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
         answer_stop = gen_cfg.get("answer_stop")
         max_depth = int(gen_cfg.get("max_depth", 2))
         max_nodes = int(gen_cfg.get("max_nodes", 10))
-        node_parallel_limit = int(gen_cfg.get("node_parallel_limit", 400))
+        node_parallel_limit = int(gen_cfg.get("node_parallel_limit", 4))
         if think_max_new_tokens is None or answer_max_new_tokens is None:
             raise ValueError("think_max_new_tokens and answer_max_new_tokens must be provided in gen_cfg")
 
@@ -206,7 +195,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
             active: List[Tuple[asyncio.Task, _Node]] = []
             while queue or active:
                 # Refill active tasks up to parallel limit
-                while queue and len(active) < node_parallel_limit and nodes_started < max_nodes:
+                while queue:# and len(active) < node_parallel_limit and nodes_started < max_nodes:
                     node = queue.popleft()
                     nodes_started += 1
                     # Adjust entropy threshold after hitting max_nodes to prevent further branching
@@ -224,11 +213,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                 if not active:
                     break
                 # Wait for first completed think expansion
-                print(f"[{time.strftime('%H:%M:%S')}] waiting on {len(active)} active tasks ...")
-
                 done, pending = await asyncio.wait([t for t, _ in active], return_when=asyncio.FIRST_COMPLETED)
-                print(f"[{time.strftime('%H:%M:%S')}] got {len(done)} finished, {len(pending)} pending")
-
                 for finished in done:
                     # Locate node
                     idx = next((i for i, (t, _) in enumerate(active) if t is finished), None)
@@ -245,8 +230,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                     # Handle branching
                     if children:
                         for c in children:
-                            if c.depth <= max_depth:
-                                queue.append(c)
+                            queue.append(c)
                         continue
                     if finished_think is None:
                         continue
@@ -271,9 +255,6 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                 for (res_idx, think_clean), ans in zip(pending_answer_meta, answers):
                     full_text = think_clean + THINK_STOP + (ans or "")
                     results[res_idx] = (full_text, 1)
-            print(
-                f"[{time.strftime('%H:%M:%S')}] loop stats queue={len(queue)} active={len(active)} results={len(results)}")
-
             return results
         tasks = [asyncio.create_task(_process_prompt(p)) for p in prompts]
         return await asyncio.gather(*tasks)

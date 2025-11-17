@@ -1,7 +1,37 @@
 python3 -m sglang.launch_server   --model omrisap/Qwen2.5-Math-1.5B-5K-SFT-think \
   --host 0.0.0.0 --port 30000 \
+  --stream-output \
   --dtype bfloat16 \
   --mem-fraction-static 0.8 \
   --tp 1 \
   --max-running-requests 4148 \
-  --max-prefill-tokens 128000
+  --max-prefill-tokens 128000 \
+  --stream-interval 16
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  python3 -m vllm.entrypoints.openai.api_server \
+  --model omrisap/Qwen2.5-Math-1.5B-5K-SFT-think \
+  --dtype bfloat16 \
+  --gpu-memory-utilization 0.95 \
+  --tensor-parallel-size 1 \
+  --max-num-batched-tokens 161920 \
+  --swap-space 8 \
+  --max-num-seqs 2024 \
+  --trust-remote-code \
+  --port 30000 \
+  --host 0.0.0.0 \
+  --enforce-eager \
+  --disable-log-stats
