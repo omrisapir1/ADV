@@ -218,9 +218,9 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
 
         # Simplified: always one param_set derived from legacy params; removed split_param_sets support
         param_set = {
-            "entropy_threshold": legacy_entropy if legacy_entropy is not None else 0.5,
-            "token_prob_threshold": legacy_prob if legacy_prob is not None else 0.10,
-            "min_tokens_split": legacy_min_split if legacy_min_split is not None else 20,
+            "entropy_threshold": legacy_entropy if legacy_entropy is not None else 0.4,
+            "token_prob_threshold": legacy_prob if legacy_prob is not None else 0.05,
+            "min_tokens_split": legacy_min_split if legacy_min_split is not None else 15,
         }
 
         think_max_new_tokens = gen_cfg.get("think_max_new_tokens")
