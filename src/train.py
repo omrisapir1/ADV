@@ -48,7 +48,8 @@ def get_batch_records(dataset_obj, batch_size: int, step: int) -> List[Dict[str,
 
 LOG_DIR = "/workspace/ADV/src/data"  # central log directory path
 
-def log_questions(questions: List[str], gold_answers: List[str], candidates: List[List[str]], rm_scores: torch.Tensor, rm_scores_ref: torch.Tensor, correctness: List[List[int]], rm_avg_loss, llm_avg_loss):
+def log_questions(questions: List[str], gold_answers: List[str], candidates: List[List[str]], rm_scores: torch.Tensor,
+                  rm_scores_ref: torch.Tensor, correctness: List[List[int]], rm_avg_loss, llm_avg_loss, pass1):
     """Log training results to disk in JSON format.
 
     Ensures all tensor / non-serializable types are converted to native Python types.
@@ -129,7 +130,8 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
             "avg_rm_ref_score": float(sum(question_rm_scores_ref) / len(question_rm_scores_ref)) if question_rm_scores_ref else 0.0,
             "correct_count": correct_count,
             'rm_avg_loss': rm_avg_loss,
-            'llm_avg_loss': llm_avg_loss
+            'llm_avg_loss': llm_avg_loss,
+            "pass1": pass1,
         }
 
         # Skip serialization error printing; silently ignore failures
@@ -399,6 +401,7 @@ async def training_loop(config: Dict[str, Any]):
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
         candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers)
+        pass1 = [(any(c ==1 for c in cs)) for cs in correctness]
 
         questions, gold_answers, candidates, correctness_filtered_list = filter_and_select_mixed(
             questions, gold_answers, candidate_texts, candidate_valid_flags, correctness
@@ -438,7 +441,7 @@ async def training_loop(config: Dict[str, Any]):
 
         print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
 
-        log_questions(questions, gold_answers, candidates, rm_scores_model, rm_scores_ref, correctness_filtered_list, rm_avg_loss, llm_avg_loss)
+        log_questions(questions, gold_answers, candidates, rm_scores_model, rm_scores_ref, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1)
 
         # ---- ASYNC SAVE (end of iteration) ----
         # Before starting new save ensure earlier hot swap is done (we awaited it already above before generation).

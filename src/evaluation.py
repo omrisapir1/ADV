@@ -144,6 +144,7 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
     all_gold_answers: List[str] = []
     all_candidate_texts: List[List[str]] = []
     all_correctness: List[List[int]] = []
+    all_pass1: List[int] = []
     rm_scores_rows: List[torch.Tensor] = []
     rm_scores_ref_rows: List[torch.Tensor] = []
 
@@ -156,6 +157,7 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         batch_candidate_texts = [[c[0] for c in row] for row in raw_candidates]
         batch_valid_flags = [[c[1] for c in row] for row in raw_candidates]
         batch_correctness = compute_final_correctness(batch_candidate_texts, batch_gold)
+        batch_pass1 = [any(c == 1 for c in cs) for cs in batch_correctness]
 
         # Apply filtering + mixed selection (new)
         batch_questions_f, batch_gold_f, batch_candidate_texts_f, batch_correctness_f = filter_and_select_mixed(
@@ -178,6 +180,7 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         all_gold_answers.extend(batch_gold_f)
         all_candidate_texts.extend(batch_candidate_texts_f)
         all_correctness.extend(batch_correctness_f)
+        all_pass1.extend(batch_pass1)
         rm_scores_rows.extend([row.detach().cpu() for row in batch_rm_scores_model])
         rm_scores_ref_rows.extend([row.detach().cpu() for row in batch_rm_scores_ref])
         del raw_candidates, batch_candidate_texts, batch_valid_flags, batch_rm_scores_model, batch_rm_scores_ref
@@ -241,6 +244,7 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         'avg_auc': avg_auc,
         'avg_auc_ref': avg_auc_ref,
         'percent_minus_one': amb_pct,
+        'pass1_only': sum(all_pass1) / len(all_pass1),
     }
 
 

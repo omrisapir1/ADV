@@ -92,7 +92,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                     top_p=0.7,
                     max_tokens=think_max_new_tokens,
                     # stop=[THINK_STOP],
-                    extra_body={"top_k": 40},
+                    extra_body={"top_k": 200},
                 )
         except Exception as e:
             print(f"[Tree] Stream start error: {e}")
