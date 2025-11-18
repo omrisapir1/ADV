@@ -431,8 +431,8 @@ async def training_loop(config: Dict[str, Any]):
             not_improved_steps = max(not_improved_steps, 0)
             last_accuracy = accuracy_mean
             last_pass1 = pass1_mean
-            last_accuracy_change = accuracy_change
-            last_pass1_change = pass1_change
+            last_accuracy_change = min(accuracy_change, 0)
+            last_pass1_change = min(pass1_change, 0)
             print(f'[Step {step}] Accuracy: {accuracy_mean:.4f} (Δ {accuracy_change:.4f}), Pass1: {pass1_mean:.4f} (Δ {pass1_change:.4f}), Not improved steps: {not_improved_steps}')
 
         if not_improved_steps == not_improve_steps_limit:
