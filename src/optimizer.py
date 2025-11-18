@@ -7,7 +7,7 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.op
     """Create optimizer based on config (no default values in .get)."""
     optim_config = config.get("optim")
 
-    Parameters without weight decay
+
     no_decay_modules = optim_config.get("no_decay_modules")
 
     decay_params, no_decay_params = [], []
