@@ -272,7 +272,7 @@ class AceMathRewardModel:
             end = min(start + batch_size, len(triplets))
             batch = triplets[start:end]
             batch_q, batch_pos, batch_neg = zip(*batch)
-            r_pos, r_neg = self.score_pairs(batch_q, batch_pos, batch_neg, self.rm_config, start==0)
+            r_pos, r_neg = self.score_pairs(batch_q, batch_pos, batch_neg, self.rm_config)
             loss_full = pairwise_rm_loss(r_pos, r_neg)
             total_loss += loss_full.detach().item()
             num_batches += 1
