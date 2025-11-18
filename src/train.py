@@ -372,6 +372,12 @@ async def training_loop(config: Dict[str, Any]):
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
     rm_update_interval = rm_config.get("update_ref_model_every")  # new config key
+
+    last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
+    print('saved old model')
+
+
+
     for step in range(num_steps):
 
         # Reward model reference refresh

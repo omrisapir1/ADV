@@ -29,12 +29,6 @@ df['questions'].apply(lambda x: np.mean([np.mean(i['correctness']) for i in x]))
 
 
 
-
-
-
-
-
-
 from typing import Dict, Any
 
 def select_candidates(entry: Dict[str, Any]) -> Dict[str, Any]:
@@ -77,6 +71,7 @@ def select_candidates(entry: Dict[str, Any]) -> Dict[str, Any]:
         "highest_0": highest_0,
         "lowest_1": lowest_1,
     }
+
 path ='/workspace/ADV/evaluation_logs/'
 res = []
 for cur_f in os.listdir(path):
@@ -85,7 +80,7 @@ for cur_f in os.listdir(path):
     if d['mode'] == 'greedy':
         res.append([d['accuracy'], d['percent_minus_one']])
     else:
-        res[-1].extend([d['avg_accuracy'], d['avg_auc'],d['percent_minus_one']])
+        res[-1].extend([d['avg_accuracy'], d['avg_auc'], d['avg_auc_ref'], d['pass1_only']])
 
 
-pd.DataFrame(res,columns=['greedy_accuracy','greedy_percent_minus_one','avg_accuracy','avg_auc','sampling_percent_minus_one'])
+pd.DataFrame(res,columns=['greedy_accuracy','greedy_percent_minus_one','avg_accuracy','avg_auc','avg_auc_ref','pass1_only'])
