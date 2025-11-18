@@ -3,6 +3,7 @@ import yaml
 import torch
 import json
 import os
+import random
 import shutil
 from datetime import datetime
 from typing import Dict, Any, List, Tuple, Optional
@@ -246,6 +247,10 @@ def choose_pos_neg_triplets(
         )
 
         triplets_for_rm.append((q, cand_list[rm_pos_j], cand_list[rm_neg_j]))
+        # add here one random pos and one random neg
+        rand_pos_j = random.choice(correct_ids)
+        rand_neg_j = random.choice(incorrect_ids)
+        triplets_for_rm.append((q, cand_list[rand_pos_j], cand_list[rand_neg_j]))
         triplets_for_llm.append((q, cand_list[llm_pos_j], cand_list[llm_neg_j]))
     return triplets_for_rm, triplets_for_llm
 
@@ -370,7 +375,7 @@ async def training_loop(config: Dict[str, Any]):
     for step in range(num_steps):
 
         # Reward model reference refresh
-        if rm_update_interval and step > 0 and step % rm_update_interval == 0:
+        if step == rm_update_interval:
             rm_model.update_ref_model()
             print(f"[RM@Step {step}] Updated reference model.")
         # LLM trainer reference refresh
