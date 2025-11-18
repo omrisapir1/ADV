@@ -161,12 +161,10 @@ class AceMathRewardModel:
         meta: List[Tuple[int, int]] = []  # (qi, kj)
         max_k = 0
         for qi, (q, cand_list) in enumerate(zip(questions, candidates_by_q)):
-            if qi==0:
             cand_list = [self.clear_solution(s) for s in cand_list]
             max_k = max(max_k, len(cand_list))
             for kj, sol in enumerate(cand_list):
                 text = self._chat(q, sol)
-                if qi == 0 and kj == 0:
                 texts.append(text)
                 meta.append((qi, kj))
         if not texts:
