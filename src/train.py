@@ -428,6 +428,7 @@ async def training_loop(config: Dict[str, Any]):
                 not_improved_steps += 1
             else:
                 not_improved_steps -= 1
+            not_improved_steps = max(not_improved_steps, 0)
             last_accuracy = accuracy_mean
             last_pass1 = pass1_mean
             last_accuracy_change = accuracy_change
