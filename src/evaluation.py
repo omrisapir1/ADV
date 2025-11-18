@@ -235,7 +235,7 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
     except Exception:
         df_path = os.path.join('evaluation_logs', f'sampling_details_{ts}.csv')
         df.to_csv(df_path, index=False)
-
+    print(f'len of all_pass1: {len(all_pass1)}')
     return {
         'mode': 'sampling',
         'num_questions': len(all_questions),

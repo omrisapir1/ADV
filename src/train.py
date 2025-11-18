@@ -409,7 +409,7 @@ async def training_loop(config: Dict[str, Any]):
         candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers)
         pass1 = [(any(c ==1 for c in cs)) for cs in correctness]
-        accuracy_mean = np.mean([np.mean(c == 1 for c in cs) for cs in correctness])
+        accuracy_mean = np.mean([np.mean([c == 1 for c in cs]) for cs in correctness])
         pass1_mean = np.mean(pass1)
         if step == 0:
             last_accuracy = accuracy_mean
