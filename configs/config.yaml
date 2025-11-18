@@ -55,7 +55,9 @@ train:
   batch_size: 32
   n_samples_per_problem: 124
   num_steps: 10000
-  gamma: 0.8
+  not_improve_steps_limit: 5
+  init_gamma: 0.05
+  gamme_addition: 0.1
 
 
 llm_trainer:

@@ -6,6 +6,9 @@ import os
 import random
 import shutil
 from datetime import datetime
+import numpy as np
+
+
 from typing import Dict, Any, List, Tuple, Optional
 from datasets import load_dataset
 from transformers import AutoTokenizer
@@ -355,7 +358,9 @@ async def training_loop(config: Dict[str, Any]):
     num_steps = config["train"]["num_steps"]
     batch_size = config["train"]["batch_size"]
     n_samples = config["train"]["n_samples_per_problem"]
-    gamma = config["train"]["gamma"]
+    gamma = config["train"]["init_gamma"]
+    gamma_addition = config["train"]["gamme_addition"]
+    not_improve_steps_limit = config["train"]["not_improve_steps_limit"]
     evaluation_config = config.get("evaluation")
     tmp_weights_path = config.get("tmp_weights_safetensors_path")  # path with potential typo kept as-is
     url = f"http://localhost:30000/flush_cache"
@@ -372,18 +377,9 @@ async def training_loop(config: Dict[str, Any]):
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
     rm_update_interval = rm_config.get("update_ref_model_every")  # new config key
-
-    last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
-    print('saved old model')
-
-
+    not_improved_steps = 0
 
     for step in range(num_steps):
-
-        # Reward model reference refresh
-        if step == rm_update_interval:
-            rm_model.update_ref_model()
-            print(f"[RM@Step {step}] Updated reference model.")
         # LLM trainer reference refresh
         if evaluation_config and (step > 0 or evaluation_config['at_start']) and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
@@ -413,6 +409,40 @@ async def training_loop(config: Dict[str, Any]):
         candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers)
         pass1 = [(any(c ==1 for c in cs)) for cs in correctness]
+        accuracy_mean = np.mean([np.mean(c == 1 for c in cs) for cs in correctness])
+        pass1_mean = np.mean(pass1)
+        if step == 0:
+            last_accuracy = accuracy_mean
+            last_pass1 = pass1_mean
+            last_accuracy_change = 0
+            last_pass1_change = 0
+            not_improved_steps = 0
+        elif step == 1:
+            not_improved_steps += int((accuracy_mean < last_accuracy) and (pass1 < last_pass1))
+            last_accuracy_change = min(accuracy_mean - last_accuracy, 0)
+            last_pass1_change = min(pass1_mean - last_pass1, 0)
+        else:
+            accuracy_change = accuracy_mean - last_accuracy
+            pass1_change = pass1_mean - last_pass1
+            if (pass1_change + last_pass1_change) > 0 or (accuracy_change + last_accuracy_change) > 0:
+                not_improved_steps += 1
+            else:
+                not_improved_steps -= 1
+            last_accuracy = accuracy_mean
+            last_pass1 = pass1_mean
+            last_accuracy_change = accuracy_change
+            last_pass1_change = pass1_change
+            print(f'[Step {step}] Accuracy: {accuracy_mean:.4f} (Δ {accuracy_change:.4f}), Pass1: {pass1_mean:.4f} (Δ {pass1_change:.4f}), Not improved steps: {not_improved_steps}')
+
+        if not_improved_steps == not_improve_steps_limit:
+            not_improved_steps = 0
+            gamma += gamma_addition
+            if gamma > 1.0:
+                gamma =- 1.0
+                rm_model.update_ref_model()
+                print(f"[RM@Step {step}] Updated reference model.")
+
+            print(f'[Step {step}] Gamma changed to {gamma:.4f}')
 
         questions, gold_answers, candidates, correctness_filtered_list = filter_and_select_mixed(
             questions, gold_answers, candidate_texts, candidate_valid_flags, correctness
