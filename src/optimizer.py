@@ -53,7 +53,7 @@ def create_scheduler(optimizer: torch.optim.Optimizer, total_steps: int, config:
     def lr_lambda(step):
         if step < warmup_steps:
             # LR should be 1e-6
-            return warmup_lr / base_lr       # scales base_lr to warmup_lr
+            return float(warmup_lr) / float(base_lr)       # scales base_lr to warmup_lr
         else:
             # LR should be 1e-5
             return 1.0                       # base LR stays
