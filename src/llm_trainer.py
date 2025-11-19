@@ -57,7 +57,7 @@ class LLMTrainer:
         self.reference_model.config.pad_token_id = self.tokenizer.pad_token_id
 
         self.optimizer = create_optimizer(self, config=config)
-        self.scheduler = create_scheduler(self.optimizer, num_steps)
+        self.scheduler = create_scheduler(self.optimizer, num_steps, config=config)
         self.model.gradient_checkpointing_enable()
 
     @torch.no_grad()
@@ -247,13 +247,13 @@ class LLMTrainer:
             # clip & step ONCE
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
             self.optimizer.step()
-            self.scheduler.step()
+
             self.optimizer.zero_grad(set_to_none=True)
             del loss, pol_pos, pol_neg, ref_pos, ref_neg
             del batch_pos, batch_neg, comp_mask_pos, comp_mask_neg, templated_prompts, prompt_lens
             # NOTE: empty_cache() does not free reserved memory to the OS, but can reduce fragmentation
             torch.cuda.empty_cache()
-
+        self.scheduler.step()
         return total_loss_val / max(1, num_batches)
 
     def save_model(self, tmp_weights_path: str):

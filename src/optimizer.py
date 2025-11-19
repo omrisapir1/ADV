@@ -6,9 +6,6 @@ from typing import Dict, Any
 def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.optim.Optimizer:
     """Create optimizer based on config (no default values in .get)."""
     optim_config = config.get("optim")
-    warmup = optim_config.get("warmup")
-    wardup_steps = warmup.get("warmup_steps")
-    warmup_lr = warmup.get("lr")
 
 
     no_decay_modules = optim_config.get("no_decay_modules")
@@ -43,6 +40,23 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.op
     return optimizer
 
 
-def create_scheduler(optimizer: torch.optim.Optimizer, total_steps: int):
+def create_scheduler(optimizer: torch.optim.Optimizer, total_steps: int, config: Dict[str, Any] = None):
     """Return a constant scheduler (no defaults)."""
-    return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0, total_iters=total_steps)
+    if not config:
+        return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0, total_iters=total_steps)
+    optim_config = config.get("optim")
+    warmup = optim_config.get("warmup")
+    warmup_steps = warmup.get("warmup_steps")
+    warmup_lr = warmup.get("lr")
+    base_lr = optim_config.get("lr")
+
+    def lr_lambda(step):
+        if step < warmup_steps:
+            # LR should be 1e-6
+            return warmup_lr / base_lr       # scales base_lr to warmup_lr
+        else:
+            # LR should be 1e-5
+            return 1.0                       # base LR stays
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
