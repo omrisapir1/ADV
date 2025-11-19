@@ -42,6 +42,7 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.op
 
 def create_scheduler(optimizer: torch.optim.Optimizer, total_steps: int, config: Dict[str, Any] = None):
     """Return a constant scheduler (no defaults)."""
+    return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0, total_iters=total_steps)
     if not config:
         return torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0, total_iters=total_steps)
     optim_config = config.get("optim")
