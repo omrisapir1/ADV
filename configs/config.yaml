@@ -67,6 +67,9 @@ llm_trainer:
   batch_size: 1
   max_grad_norm: 1.0
   optim:
+    warmup:
+      warmup_steps: 10
+      lr: 1e-6
     name: adamw
     lr: 1e-5
     weight_decay: 0.000

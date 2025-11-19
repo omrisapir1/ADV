@@ -394,7 +394,28 @@ async def training_loop(config: Dict[str, Any]):
         prompts = build_prompts(questions, tokenizer)
         st = time.time()
 
-        raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
+        # --- Wrapped generation with timeout & single retry (5 min each) ---
+        timeout_seconds = 300  # 5 minutes
+        raw_candidates = None
+        for attempt in range(2):  # attempt 0 + retry 1
+            try:
+                raw_candidates = await asyncio.wait_for(
+                    engine.generate_candidates(prompts, n_samples=n_samples, **generation_config),
+                    timeout=timeout_seconds,
+                )
+                break  # success
+            except asyncio.TimeoutError:
+                print(f"[Step {step}] Generation timeout after {timeout_seconds}s (attempt {attempt+1}/2). Retrying..." if attempt == 0 else f"[Step {step}] Generation timeout after second attempt; skipping step.")
+            except Exception as e:
+                print(f"[Step {step}] Generation failed (attempt {attempt+1}/2): {e}" if attempt == 0 else f"[Step {step}] Generation failed again: {e}; skipping step.")
+                torch.cuda.empty_cache()
+                response = requests.post(url)
+            if raw_candidates is None and attempt == 1:
+                # Failed both attempts; skip rest of this training step
+                continue  # will hit loop 'continue' below
+        if raw_candidates is None:
+            # Skip this iteration due to generation failure
+            continue
         print(f"[Step {step}] Generation time: {time.time() - st:.2f}s")
 
 
@@ -500,3 +521,4 @@ async def training_loop(config: Dict[str, Any]):
 def run(config_path: str):
     config = load_config(config_path)
     asyncio.run(training_loop(config))
+

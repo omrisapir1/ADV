@@ -6,6 +6,9 @@ from typing import Dict, Any
 def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.optim.Optimizer:
     """Create optimizer based on config (no default values in .get)."""
     optim_config = config.get("optim")
+    warmup = optim_config.get("warmup")
+    wardup_steps = warmup.get("warmup_steps")
+    warmup_lr = warmup.get("lr")
 
 
     no_decay_modules = optim_config.get("no_decay_modules")
