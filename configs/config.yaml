@@ -58,8 +58,8 @@ train:
   num_steps: 10000
   not_improve_steps_limit: 7
   start_explore_at: 50
-  explore_gamma: 0.05
-  exploit_gamma: 0.95
+  explore_gamma: 0.95
+  exploit_gamma: 0.05
 
 
 llm_trainer:

@@ -387,7 +387,7 @@ async def training_loop(config: Dict[str, Any]):
 
     gamma = exploit_gamma
     exploration_mode = False
-
+    print(f'Starting at gamma = {gamma:.2f}')
     for step in range(num_steps):
         if step % rm_save_every_steps == 0 :
             rm_model.save_model(rm_save_path)
@@ -475,8 +475,9 @@ async def training_loop(config: Dict[str, Any]):
             print(f'[Step {step}] Accuracy: {accuracy_mean:.4f} (Δ {accuracy_change:.4f}), Pass1: {pass1_mean:.4f} (Δ {pass1_change:.4f}), Not improved steps: {not_improved_steps}')
 
         if step == start_explore_at:
-            print(f"[Step {step}] Starting exploration phase.")
+
             gamma = explore_gamma
+            print(f"[Step {step}] Starting exploration phase. gamma = {gamma:.2f}")
             exploration_mode = True
 
             not_improved_steps = 0
@@ -484,18 +485,18 @@ async def training_loop(config: Dict[str, Any]):
         if step > start_explore_at and not_improved_steps == not_improve_steps_limit:
             not_improved_steps = 0
             if exploration_mode:
-                print(f"[Step {step}] Reached max not improved steps; stopping exploration phase.")
+                gamma = exploit_gamma
+                print(f"[Step {step}] Reached max not improved steps; stopping exploration phase.  gamma = {gamma:.2f}")
                 exploration_mode = False
                 rm_model.update_ref_model()
                 print(f"[RM@Step {step}] Updated reference model.")
-                gamma = exploit_gamma
+
             else:
                 exploration_mode = True
                 gamma = explore_gamma
-                print(f"[Step {step}] Reached max not improved steps; stopping exploitation phase and starting exploration phase.")
+                print(f"[Step {step}] Reached max not improved steps; stopping exploitation phase and starting exploration phase. gamma = {gamma:.2f}")
 
 
-            print(f'[Step {step}] Gamma changed to {gamma:.4f}')
 
         questions, gold_answers, candidates, correctness_filtered_list = filter_and_select_mixed(
             questions, gold_answers, candidate_texts, candidate_valid_flags, correctness
@@ -523,7 +524,7 @@ async def training_loop(config: Dict[str, Any]):
         if not triplets_for_rm:
             continue
 
-        if (not exploration_mode) or rm_train_in_explore_every:
+        if (not exploration_mode) or step % rm_train_in_explore_every == 0:
 
             try:
                 rm_avg_loss = rm_model.train_step(triplets_for_rm)
