@@ -346,6 +346,8 @@ async def _async_hot_swap(engine, path: str):
 
 async def training_loop(config: Dict[str, Any]):
     rm_config = config.get("reward_model", {})
+    rm_save_every_steps = rm_config.get("save_every_steps")
+    rm_save_path = rm_config.get("save_path")
     llm_name = config["model"]["llm_name"]
     rm_name = config["model"]["rm_name"]
     generation_config = config.get("generation")
@@ -358,8 +360,11 @@ async def training_loop(config: Dict[str, Any]):
     num_steps = config["train"]["num_steps"]
     batch_size = config["train"]["batch_size"]
     n_samples = config["train"]["n_samples_per_problem"]
-    gamma = config["train"]["init_gamma"]
-    gamma_addition = config["train"]["gamme_addition"]
+    explore_gamma = config["train"]["explore_gamma"]
+    exploit_gamma = config["train"]["exploit_gamma"]
+    rm_train_in_explore_every = config["train"]["train_in_explore_every"]
+
+    start_explore_at = config["train"]["start_explore_at"]
     not_improve_steps_limit = config["train"]["not_improve_steps_limit"]
     evaluation_config = config.get("evaluation")
     tmp_weights_path = config.get("tmp_weights_safetensors_path")  # path with potential typo kept as-is
@@ -376,10 +381,18 @@ async def training_loop(config: Dict[str, Any]):
 
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
-    rm_update_interval = rm_config.get("update_ref_model_every")  # new config key
+    rm_update_step = rm_config.get("update_ref_model")  # new config key
     not_improved_steps = 0
 
+    gamma = exploit_gamma
+    exploration_mode = False
+
     for step in range(num_steps):
+        if step % rm_save_every_steps == 0 and step > 0:
+            rm_model.save_model(rm_save_path)
+
+
+
         # LLM trainer reference refresh
         if evaluation_config and (step > 0 or evaluation_config['at_start']) and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
@@ -387,6 +400,10 @@ async def training_loop(config: Dict[str, Any]):
             )
             print(f"[Eval@Step {step}] {json.dumps(eval_res, indent=2)}")
             response = requests.post(url)
+
+        if step == rm_update_step:
+            print(f"[RM@Step {step}] Updating reference model.")
+            rm_model.update_ref_model()
 
         records = get_batch_records(train_ds, batch_size, step)
         questions = [r[q_field] for r in records]
@@ -456,13 +473,26 @@ async def training_loop(config: Dict[str, Any]):
             last_pass1_change = min(pass1_change, 0)
             print(f'[Step {step}] Accuracy: {accuracy_mean:.4f} (Δ {accuracy_change:.4f}), Pass1: {pass1_mean:.4f} (Δ {pass1_change:.4f}), Not improved steps: {not_improved_steps}')
 
-        if not_improved_steps == not_improve_steps_limit:
+        if step == start_explore_at:
+            print(f"[Step {step}] Starting exploration phase.")
+            gamma = explore_gamma
+            exploration_mode = True
+
             not_improved_steps = 0
-            gamma += gamma_addition
-            if gamma > 1.0:
-                gamma =- 1.0
+
+        if step > start_explore_at and not_improved_steps == not_improve_steps_limit:
+            not_improved_steps = 0
+            if exploration_mode:
+                print(f"[Step {step}] Reached max not improved steps; stopping exploration phase.")
+                exploration_mode = False
                 rm_model.update_ref_model()
                 print(f"[RM@Step {step}] Updated reference model.")
+                gamma = exploit_gamma
+            else:
+                exploration_mode = True
+                gamma = explore_gamma
+                print(f"[Step {step}] Reached max not improved steps; stopping exploitation phase and starting exploration phase.")
+
 
             print(f'[Step {step}] Gamma changed to {gamma:.4f}')
 
@@ -491,18 +521,21 @@ async def training_loop(config: Dict[str, Any]):
 
         if not triplets_for_rm:
             continue
-        try:
-            rm_avg_loss = rm_model.train_step(triplets_for_rm)
-        except Exception as e:
-            print(f"[Step {step}] Exception during RM training: {e} will skip")
-            rm_avg_loss = 0.0
-        try:
-            llm_avg_loss = llm_trainer.train_step(triplets_for_llm)
-        except Exception as e:
-            print(f"[Step {step}] Exception during LLM training: {e} will skip")
-            llm_avg_loss = 0.0
+            
+        if (not exploration_mode) or rm_train_in_explore_every:
 
-        print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
+            try:
+                rm_avg_loss = rm_model.train_step(triplets_for_rm)
+            except Exception as e:
+                print(f"[Step {step}] Exception during RM training: {e} will skip")
+                rm_avg_loss = 0.0
+            try:
+                llm_avg_loss = llm_trainer.train_step(triplets_for_llm)
+            except Exception as e:
+                print(f"[Step {step}] Exception during LLM training: {e} will skip")
+                llm_avg_loss = 0.0
+
+            print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
 
         log_questions(questions, gold_answers, candidates, rm_scores_model, rm_scores_ref, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1)
 

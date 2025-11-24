@@ -258,6 +258,12 @@ class AceMathRewardModel:
         r_neg = original_logits[1::2, 1]
         return r_pos, r_neg
 
+    def save_model(self, path: str):
+        torch.save(self.model.state_dict(), os.path.join(path, "reward_model.pt"))
+
+    def load_model(self, path: str):
+        self.model.load_state_dict(torch.load(os.path.join(path, "reward_model.pt")))
+
     def train_step(self, triplets: List[Tuple[str, str, str]]) -> float:
         # if hasattr(self.model, "gradient_checkpointing_enable"):
         #     self.model.gradient_checkpointing_enable()
