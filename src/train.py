@@ -391,18 +391,20 @@ async def training_loop(config: Dict[str, Any]):
     gamma = explore_gamma
     exploration_mode = True
 
-    eval_res = await run_full_evaluation(
-        engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
-    )
-    print(f"[Eval@Step {0}] {json.dumps(eval_res, indent=2)}")
+    # eval_res = await run_full_evaluation(
+    #     engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
+    # )
+    # print(f"[Eval@Step {0}] {json.dumps(eval_res, indent=2)}")
     last_swap_task = await asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
     rm_model.load_model(rm_save_path)
     rm_model.update_ref_model()
-    eval_res = await run_full_evaluation(
-        engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
-    )
-    print(f"[Eval@Step {0}] {json.dumps(eval_res, indent=2)}")
+    # eval_res = await run_full_evaluation(
+    #     engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
+    # )
+    # print(f"[Eval@Step {0}] {json.dumps(eval_res, indent=2)}")
     not_improved_steps = 3
+    last_accuracy = 0
+    last_pass1 = 0
 
 
 
