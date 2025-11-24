@@ -9,7 +9,7 @@ reward_model:
   pad_to_multiple_of_8: true
   train_in_explore_every: 10
   save_every_steps: 10
-  save_path: /workspace/ADV/checkpoints/rm
+  save_path: /workspace/ADV/rm
   optim:
     name: adamw
     lr: 1e-5
@@ -84,7 +84,7 @@ llm_trainer:
 tmp_weights_safetensors_path: /workspace/ADV/tmp_weights.safetenosrs
 
 evaluation:
-  at_start: true
+  at_start: false
   every_steps: 25
   n_samples_per_problem: 24
   sampling_batch_size: 48

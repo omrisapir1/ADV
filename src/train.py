@@ -389,7 +389,7 @@ async def training_loop(config: Dict[str, Any]):
     exploration_mode = False
 
     for step in range(num_steps):
-        if step % rm_save_every_steps == 0 and step > 0:
+        if step % rm_save_every_steps == 0 :
             rm_model.save_model(rm_save_path)
 
 
