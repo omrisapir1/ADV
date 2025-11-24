@@ -163,9 +163,6 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         batch_questions_f, batch_gold_f, batch_candidate_texts_f, batch_correctness_f = filter_and_select_mixed(
             batch_questions, batch_gold, batch_candidate_texts, batch_valid_flags, batch_correctness
         )
-        if not batch_questions_f:
-            continue  # no mixed items in this batch
-
         # Reward scoring on filtered batch
         try:
             batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions_f, batch_candidate_texts_f, rm_config)

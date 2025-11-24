@@ -378,17 +378,40 @@ async def training_loop(config: Dict[str, Any]):
     rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
     llm_trainer = load_llm_trainer(llm_name, llm_trainer__gpu, num_steps, llm_trainer_config)
 
-    ensure_empty_log_dir(LOG_DIR)
+    # ensure_empty_log_dir(LOG_DIR)
 
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
     rm_update_step = rm_config.get("update_ref_model")  # new config key
     not_improved_steps = 0
 
-    gamma = exploit_gamma
-    exploration_mode = False
+    # gamma = exploit_gamma
+    # exploration_mode = False
+
+    gamma = explore_gamma
+    exploration_mode = True
+
+    eval_res = await run_full_evaluation(
+        engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
+    )
+    print(f"[Eval@Step {0}] {json.dumps(eval_res, indent=2)}")
+    last_swap_task = await asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
+    rm_model.load_model(rm_save_path)
+    rm_model.update_ref_model()
+    eval_res = await run_full_evaluation(
+        engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
+    )
+    print(f"[Eval@Step {0}] {json.dumps(eval_res, indent=2)}")
+    not_improved_steps = 3
+
+
+
+
+
     print(f'Starting at gamma = {gamma:.2f}')
     for step in range(num_steps):
+        if step<77:
+            continue
         if step % rm_save_every_steps == 0 :
             rm_model.save_model(rm_save_path)
 
