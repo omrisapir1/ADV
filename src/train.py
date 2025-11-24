@@ -347,6 +347,7 @@ async def _async_hot_swap(engine, path: str):
 async def training_loop(config: Dict[str, Any]):
     rm_config = config.get("reward_model", {})
     rm_save_every_steps = rm_config.get("save_every_steps")
+    rm_train_in_explore_every = rm_config["train_in_explore_every"]
     rm_save_path = rm_config.get("save_path")
     llm_name = config["model"]["llm_name"]
     rm_name = config["model"]["rm_name"]
@@ -362,7 +363,7 @@ async def training_loop(config: Dict[str, Any]):
     n_samples = config["train"]["n_samples_per_problem"]
     explore_gamma = config["train"]["explore_gamma"]
     exploit_gamma = config["train"]["exploit_gamma"]
-    rm_train_in_explore_every = config["train"]["train_in_explore_every"]
+
 
     start_explore_at = config["train"]["start_explore_at"]
     not_improve_steps_limit = config["train"]["not_improve_steps_limit"]
@@ -521,7 +522,7 @@ async def training_loop(config: Dict[str, Any]):
 
         if not triplets_for_rm:
             continue
-            
+
         if (not exploration_mode) or rm_train_in_explore_every:
 
             try:
