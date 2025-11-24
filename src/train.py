@@ -530,13 +530,17 @@ async def training_loop(config: Dict[str, Any]):
             except Exception as e:
                 print(f"[Step {step}] Exception during RM training: {e} will skip")
                 rm_avg_loss = 0.0
-            try:
-                llm_avg_loss = llm_trainer.train_step(triplets_for_llm)
-            except Exception as e:
-                print(f"[Step {step}] Exception during LLM training: {e} will skip")
-                llm_avg_loss = 0.0
+        else:
+            rm_avg_loss = 0.0
 
-            print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
+        try:
+            llm_avg_loss = llm_trainer.train_step(triplets_for_llm)
+        except Exception as e:
+            print(f"[Step {step}] Exception during LLM training: {e} will skip")
+            llm_avg_loss = 0.0
+
+
+        print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
 
         log_questions(questions, gold_answers, candidates, rm_scores_model, rm_scores_ref, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1)
 
