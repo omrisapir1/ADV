@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Optional, Dict, Any, List, Tuple
-import copy
 import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
@@ -35,7 +34,7 @@ class LLMTrainer:
 
         # Primary (trainable) model
         self.model = AutoModelForCausalLM.from_pretrained(
-            "/workspace/ADV/tmp_weights.safetenosrs",
+            model_name,
             torch_dtype=dtype,
             trust_remote_code=True,
             low_cpu_mem_usage=True,
@@ -44,17 +43,17 @@ class LLMTrainer:
 
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
 
-        self.reference_model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=dtype,
-            trust_remote_code=True,
-            low_cpu_mem_usage=True,
-            attn_implementation="sdpa",
-        ).to(self.device)
-        for p in self.reference_model.parameters():
-            p.requires_grad_(False)
-
-        self.reference_model.config.pad_token_id = self.tokenizer.pad_token_id
+        # self.reference_model = AutoModelForCausalLM.from_pretrained(
+        #     model_name,
+        #     torch_dtype=dtype,
+        #     trust_remote_code=True,
+        #     low_cpu_mem_usage=True,
+        #     attn_implementation="sdpa",
+        # ).to(self.device)
+        # for p in self.reference_model.parameters():
+        #     p.requires_grad_(False)
+        #
+        # self.reference_model.config.pad_token_id = self.tokenizer.pad_token_id
 
         self.optimizer = create_optimizer(self, config=config)
         self.scheduler = create_scheduler(self.optimizer, num_steps, config=config)
@@ -256,6 +255,77 @@ class LLMTrainer:
         self.scheduler.step()
         return total_loss_val / max(1, num_batches)
 
+    def train_step_bt(self, triplets: List[Tuple[str, str, str]]) -> float:
+        """Bradley–Terry (logistic) preference training step without reference model.
+
+        Implements: L(θ) = -log σ( log πθ(y+ | x) - log πθ(y- | x) )
+
+        Args:
+            triplets: list of (prompt_question, chosen_completion, rejected_completion)
+        Returns:
+            Average BT loss over processed mini-batches.
+        """
+        self.model.gradient_checkpointing_enable()
+        self.model.train()
+
+        train_batch_size = int(self.config.get("batch_size", 1))
+        max_grad_norm = float(self.config.get("max_grad_norm", 1.0))
+        total_loss_val = 0.0
+        num_batches = 0
+
+        self.optimizer.zero_grad(set_to_none=True)
+
+        for start in range(0, len(triplets), train_batch_size):
+            end = min(start + train_batch_size, len(triplets))
+            batch = triplets[start:end]
+
+            questions = [t[0] for t in batch]
+            pos = [t[1] for t in batch]
+            neg = [t[2] for t in batch]
+
+            # Prompt lengths
+            templated_prompts = build_prompts(questions, self.tokenizer)
+            prompt_lens = self._prompt_token_lengths(templated_prompts)
+
+            # Tokenize positive/negative completions
+            batch_pos = self._concat_tokenize(questions, pos)
+            batch_neg = self._concat_tokenize(questions, neg)
+
+            # Completion masks
+            comp_mask_pos = self._build_completion_mask(
+                batch_pos["input_ids"], batch_pos["attention_mask"], prompt_lens
+            )
+            comp_mask_neg = self._build_completion_mask(
+                batch_neg["input_ids"], batch_neg["attention_mask"], prompt_lens
+            )
+
+            # Sequence log-probs (policy model only)
+            pol_pos = self._sequence_logprobs(
+                self.model, batch_pos["input_ids"].to(self.model.device), batch_pos["attention_mask"].to(self.model.device), comp_mask_pos.to(self.model.device)
+            )
+            pol_neg = self._sequence_logprobs(
+                self.model, batch_neg["input_ids"].to(self.model.device), batch_neg["attention_mask"].to(self.model.device), comp_mask_neg.to(self.model.device)
+            )
+
+            # Bradley-Terry logistic loss
+            bt_loss = -F.logsigmoid(pol_pos - pol_neg).mean()
+            total_loss_val += float(bt_loss.detach().cpu().item())
+            num_batches += 1
+
+            bt_loss.backward()
+
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
+            self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
+
+            # Cleanup
+            del bt_loss, pol_pos, pol_neg
+            del batch_pos, batch_neg, comp_mask_pos, comp_mask_neg, templated_prompts, prompt_lens
+            torch.cuda.empty_cache()
+
+        self.scheduler.step()
+        return total_loss_val / max(1, num_batches)
+
     def save_model(self, tmp_weights_path: str):
         self.model.save_pretrained(tmp_weights_path, safe_serialization=True)
 
@@ -266,4 +336,3 @@ class LLMTrainer:
 
 def load_llm_trainer(model_name: str, gpu_id: int, num_steps: int, config: Optional[Dict[str, Any]] = None) -> LLMTrainer:
     return LLMTrainer(model_name, gpu_id, num_steps, config)
-
