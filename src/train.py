@@ -378,7 +378,7 @@ async def training_loop(config: Dict[str, Any]):
     rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
     llm_trainer = load_llm_trainer(llm_name, llm_trainer__gpu, num_steps, llm_trainer_config)
 
-    ensure_empty_log_dir(LOG_DIR)
+    # ensure_empty_log_dir(LOG_DIR)
 
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
@@ -388,9 +388,12 @@ async def training_loop(config: Dict[str, Any]):
     gamma = exploit_gamma
     exploration_mode = False
 
-
+    rm_model.load_model(rm_save_path)
     print(f'Starting at gamma = {gamma:.2f}')
     for step in range(num_steps):
+        if step <110:
+            continue
+        step = step -110
         if step % rm_save_every_steps == 0 :
             rm_model.save_model(rm_save_path)
 
@@ -430,6 +433,7 @@ async def training_loop(config: Dict[str, Any]):
                 print(f"[Step {step}] Generation failed (attempt {attempt+1}/2): {e}" if attempt == 0 else f"[Step {step}] Generation failed again: {e}; skipping step.")
                 torch.cuda.empty_cache()
                 response = requests.post(url)
+                engine = build_sglang_engine(llm_name, generation_config)
             if raw_candidates is None and attempt == 1:
                 # Failed both attempts; skip rest of this training step
                 continue  # will hit loop 'continue' below
