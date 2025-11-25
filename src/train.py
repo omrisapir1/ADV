@@ -537,8 +537,7 @@ async def training_loop(config: Dict[str, Any]):
             rm_avg_loss = 0.0
 
         try:
-            # llm_avg_loss = llm_trainer.train_step_bt(triplets_for_llm)
-            llm_avg_loss = 0
+            llm_avg_loss = llm_trainer.train_step_bt(triplets_for_llm)
 
         except Exception as e:
             print(f"[Step {step}] Exception during LLM training: {e} will skip")
