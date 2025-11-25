@@ -57,7 +57,7 @@ train:
   n_samples_per_problem: 124
   num_steps: 10000
   not_improve_steps_limit: 7
-  start_explore_at: 50
+  start_explore_at: 25
   explore_gamma: 0.95
   exploit_gamma: 0.05
 
@@ -84,7 +84,7 @@ llm_trainer:
 tmp_weights_safetensors_path: /workspace/ADV/tmp_weights.safetenosrs
 
 evaluation:
-  at_start: false
+  at_start: true
   every_steps: 25
   n_samples_per_problem: 24
   sampling_batch_size: 48
