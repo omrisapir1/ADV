@@ -390,6 +390,7 @@ async def training_loop(config: Dict[str, Any]):
     exploration_mode = False
 
     rm_model.load_model(rm_save_path)
+    rm_model.update_ref_model()
     llm_trainer.load_model(tmp_weights_path)
 
 

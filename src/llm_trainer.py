@@ -284,6 +284,9 @@ class LLMTrainer:
         self.reference_model.load_state_dict(self.model.state_dict())
         print('updated reference model')
 
+    def load_model(self, path: str):
+        self.model.load_state_dict(torch.load(path))
+
 
 def load_llm_trainer(model_name: str, gpu_id: int, num_steps: int, config: Optional[Dict[str, Any]] = None) -> LLMTrainer:
     return LLMTrainer(model_name, gpu_id, num_steps, config)
