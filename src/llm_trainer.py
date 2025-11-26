@@ -285,7 +285,13 @@ class LLMTrainer:
         print('updated reference model')
 
     def load_model(self, path: str):
-        self.model.load_state_dict(torch.load(path))
+        self.model = AutoModelForCausalLM.from_pretrained(
+            path,
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
+            attn_implementation="sdpa",
+        ).to(self.device)
 
 
 def load_llm_trainer(model_name: str, gpu_id: int, num_steps: int, config: Optional[Dict[str, Any]] = None) -> LLMTrainer:
