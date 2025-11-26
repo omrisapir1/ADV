@@ -309,7 +309,7 @@ class LLMTrainer:
                 print(f"Reference model exception: {e} will skip this batch.")
                 torch.cuda.empty_cache()
                 continue
-            raise 
+            raise
 
             # ---- DPO loss ----
             # scale by total number of mini-batches so total gradient matches one big batch
