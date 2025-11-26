@@ -296,7 +296,7 @@ class AceMathRewardModel:
     @staticmethod
     def clear_solution(full_solution: str) -> str:
         if '</think>' in full_solution:
-            return full_solution[:full_solution.index('</think>')] + '</think>'
+            return full_solution[:full_solution.rfind('</think>')] + '</think>'
         if len(full_solution) < 50:
             return '</think>'
         ind = full_solution[:-50].rfind("\n")
