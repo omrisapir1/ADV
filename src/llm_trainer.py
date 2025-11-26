@@ -156,7 +156,7 @@ class LLMTrainer:
         print(logits)
         print(model.dtype)
         print(logits.dtype)
-        exit(0)
+
 
         # Shift for causal LM
         logprobs = F.log_softmax(logits[:, :-1, :], dim=-1)   # (B, S-1, V)
@@ -223,7 +223,7 @@ class LLMTrainer:
                     print("  Completion-only text: <EMPTY>")
 
             print("="*80 + "\n")
-
+        exit(0)
         return seq_logprob
 
     def _dpo_loss(
