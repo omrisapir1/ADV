@@ -162,10 +162,10 @@ class LLMTrainer:
             logprobs, dim=-1, index=labels.unsqueeze(-1)
         ).squeeze(-1)                                         # (B, S-1)
 
-        for i in range(30):
+        for i in range(117):
             print(i, labels[0, i].item(), self.tokenizer.decode([labels[0, i].item()]))
 
-        idx = labels[0, 150].item()
+        idx = labels[0, 116].item()
         print("label token id:", idx)
         print("decoded:", self.tokenizer.decode([idx]))
         print("logprob for this index:", logprobs[0, 149, idx])
