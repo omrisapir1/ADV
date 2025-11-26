@@ -73,7 +73,7 @@ llm_trainer:
 #      warmup_steps: 10
 #      lr: 1e-6
     name: adamw
-    lr: 5e-5
+    lr: 3e-5
     weight_decay: 0.000
     eps: 1.0e-8
     betas:
