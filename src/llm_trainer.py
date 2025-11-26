@@ -118,29 +118,109 @@ class LLMTrainer:
         comp_mask = comp_mask & (attention_mask[:, 1:].bool())
         return comp_mask  # (B, S-1)
 
+    # def _sequence_logprobs(
+    #     self,
+    #     model: AutoModelForCausalLM,
+    #     input_ids: torch.Tensor,          # (B, S)
+    #     attention_mask: torch.Tensor,     # (B, S)
+    #     completion_mask: torch.Tensor,    # (B, S-1) selecting completion tokens
+    # ) -> torch.Tensor:
+    #     """
+    #     Compute length-normalized (mean) log-prob over completion tokens only.
+    #     Uses standard causal LM shift: logits[:, :-1, :] vs labels[:, 1:].
+    #     Returns (B,) mean per-token log-prob across selected completion positions.
+    #     """
+    #     outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+    #     logits = outputs.logits  # (B, S, V)
+    #     logprobs = F.log_softmax(logits[:, :-1, :], dim=-1)              # (B, S-1, V)
+    #     labels = input_ids[:, 1:]                                        # (B, S-1)
+    #     token_logprobs = torch.gather(logprobs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)  # (B, S-1)
+    #
+    #     # Mask to completion tokens only (keep zeros for non-completion positions)
+    #     masked = token_logprobs.masked_fill(~completion_mask, 0.0)
+    #     lengths = completion_mask.sum(dim=-1).clamp(min=1)  # (B,)
+    #     seq_logprob = masked.sum(dim=-1) / lengths          # mean per completion token
+    #     return seq_logprob  # (B,)
+
     def _sequence_logprobs(
         self,
         model: AutoModelForCausalLM,
         input_ids: torch.Tensor,          # (B, S)
         attention_mask: torch.Tensor,     # (B, S)
-        completion_mask: torch.Tensor,    # (B, S-1) selecting completion tokens
+        completion_mask: torch.Tensor,    # (B, S-1)
+        debug: bool = True,
     ) -> torch.Tensor:
-        """
-        Compute length-normalized (mean) log-prob over completion tokens only.
-        Uses standard causal LM shift: logits[:, :-1, :] vs labels[:, 1:].
-        Returns (B,) mean per-token log-prob across selected completion positions.
-        """
+
         outputs = model(input_ids=input_ids, attention_mask=attention_mask)
         logits = outputs.logits  # (B, S, V)
-        logprobs = F.log_softmax(logits[:, :-1, :], dim=-1)              # (B, S-1, V)
-        labels = input_ids[:, 1:]                                        # (B, S-1)
-        token_logprobs = torch.gather(logprobs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)  # (B, S-1)
 
-        # Mask to completion tokens only (keep zeros for non-completion positions)
+        # Shift for causal LM
+        logprobs = F.log_softmax(logits[:, :-1, :], dim=-1)   # (B, S-1, V)
+        labels = input_ids[:, 1:]                             # (B, S-1)
+        token_logprobs = torch.gather(
+            logprobs, dim=-1, index=labels.unsqueeze(-1)
+        ).squeeze(-1)                                         # (B, S-1)
+
+        # Apply mask
         masked = token_logprobs.masked_fill(~completion_mask, 0.0)
-        lengths = completion_mask.sum(dim=-1).clamp(min=1)  # (B,)
-        seq_logprob = masked.sum(dim=-1) / lengths          # mean per completion token
-        return seq_logprob  # (B,)
+        lengths = completion_mask.sum(dim=-1).clamp(min=1)
+        seq_logprob = masked.sum(dim=-1) / lengths
+
+        # ---------------------------
+        # DEBUG PRINTS
+        # ---------------------------
+        if debug:
+            B, S = input_ids.shape
+            print("\n" + "="*80)
+            print("DEBUG `_sequence_logprobs`")
+            print("="*80)
+
+            print(f"Batch size: {B}, Sequence length: {S}")
+            print(f"Completion lengths: {lengths.tolist()}")
+
+            # Show which positions are marked as completion tokens
+            print("\nCompletion mask (first 2 examples):")
+            for i in range(min(2, B)):
+                print(f"  Example {i}:")
+                print(f"    mask sum:  {completion_mask[i].sum().item()}")
+                print(f"    mask bool: {completion_mask[i].tolist()}")
+
+            # Show the raw per-token logprobs
+            print("\nToken log-probs (first example):")
+            if B > 0:
+                print(token_logprobs[0].tolist())
+
+            # Show masked token log-probs
+            print("\nMasked token log-probs (first example):")
+            if B > 0:
+                print(masked[0].tolist())
+
+            # Show final aggregated log-probs
+            print("\nFinal seq_logprob (per example):")
+            print(seq_logprob.tolist())
+
+            # Decode prompt + completion tokens for sanity check
+            print("\nDecoded prompt + completion snapshots:")
+            for i in range(min(2, B)):
+                decoded_full = self.tokenizer.decode(input_ids[i], skip_special_tokens=False)
+                print(f"  Example {i} text:")
+                print(decoded_full)
+
+                # decode only completion region
+                comp_positions = completion_mask[i].nonzero(as_tuple=True)[0].tolist()
+                if comp_positions:
+                    start = comp_positions[0]+1  # +1 due to labels shift
+                    end   = comp_positions[-1]+2
+                    decoded_completion = self.tokenizer.decode(
+                        input_ids[i, start:end], skip_special_tokens=False
+                    )
+                    print(f"  Completion-only text: {decoded_completion}")
+                else:
+                    print("  Completion-only text: <EMPTY>")
+
+            print("="*80 + "\n")
+
+        return seq_logprob
 
     def _dpo_loss(
         self,
