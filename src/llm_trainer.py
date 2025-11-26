@@ -153,6 +153,10 @@ class LLMTrainer:
 
         outputs = model(input_ids=input_ids, attention_mask=attention_mask)
         logits = outputs.logits  # (B, S, V)
+        print(logits)
+        print(model.dtype)
+        print(logits.dtype)
+        exit(0)
 
         # Shift for causal LM
         logprobs = F.log_softmax(logits[:, :-1, :], dim=-1)   # (B, S-1, V)
