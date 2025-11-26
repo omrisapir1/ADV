@@ -162,13 +162,14 @@ class LLMTrainer:
             logprobs, dim=-1, index=labels.unsqueeze(-1)
         ).squeeze(-1)                                         # (B, S-1)
 
-        for i in range(117):
+        for i in range(113):
             print(i, labels[0, i].item(), self.tokenizer.decode([labels[0, i].item()]))
 
-        idx = labels[0, 116].item()
+        idx = labels[0, 112].item()
         print("label token id:", idx)
         print("decoded:", self.tokenizer.decode([idx]))
-        print("logprob for this index:", logprobs[0, 149, idx])
+        print("logprob for this index:", logprobs[0, 111, idx])
+        print("token prob at this index:", torch.exp(logprobs[0, 111, idx]))
 
         # Apply mask
         masked = token_logprobs.masked_fill(~completion_mask, 0.0)
