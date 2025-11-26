@@ -153,9 +153,6 @@ class LLMTrainer:
 
         outputs = model(input_ids=input_ids, attention_mask=attention_mask)
         logits = outputs.logits  # (B, S, V)
-        print(logits)
-        print(model.dtype)
-        print(logits.dtype)
 
 
         # Shift for causal LM
@@ -164,6 +161,14 @@ class LLMTrainer:
         token_logprobs = torch.gather(
             logprobs, dim=-1, index=labels.unsqueeze(-1)
         ).squeeze(-1)                                         # (B, S-1)
+
+        for i in range(30):
+            print(i, labels[0, i].item(), self.tokenizer.decode([labels[0, i].item()]))
+
+        idx = labels[0, 150].item()
+        print("label token id:", idx)
+        print("decoded:", self.tokenizer.decode([idx]))
+        print("logprob for this index:", logprobs[0, 149, idx])
 
         # Apply mask
         masked = token_logprobs.masked_fill(~completion_mask, 0.0)
