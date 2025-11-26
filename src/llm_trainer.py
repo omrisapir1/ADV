@@ -162,8 +162,13 @@ class LLMTrainer:
             logprobs, dim=-1, index=labels.unsqueeze(-1)
         ).squeeze(-1)                                         # (B, S-1)
 
-        for i in range(113):
+        for i in range(150):
+            tid = labels[0, i].item()
+            tok = self.tokenizer.decode([tid])
+            logp = token_logprobs[0, i].item()  # log P(token_i | prefix)
+            prob = token_logprobs[0, i].exp().item()  # P(token_i | prefix)
             print(i, labels[0, i].item(), self.tokenizer.decode([labels[0, i].item()]))
+            print(f"{i:3d}  id={tid:6d}  token={tok!r:15s}  logp={logp:8.4f}  p={prob: .4e}")
 
         idx = labels[0, 112].item()
         print("label token id:", idx)
