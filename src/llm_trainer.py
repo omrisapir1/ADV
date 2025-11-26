@@ -171,6 +171,25 @@ class LLMTrainer:
         print("logprob for this index:", logprobs[0, 111, idx])
         print("token prob at this index:", torch.exp(logprobs[0, 111, idx]))
 
+        step = 111  # the timestep before "To"
+
+        step_logprobs = logprobs[0, step]  # (V,)
+        topk_vals, topk_idx = torch.topk(step_logprobs, k=10)
+
+        print("\nTop-10 tokens at this step:")
+        for rank in range(10):
+            tid = topk_idx[rank].item()
+            print(
+                f"#{rank + 1}: id={tid}, token={self.tokenizer.decode([tid])!r}, "
+                f"logp={topk_vals[rank].item():.4f}, p={topk_vals[rank].exp().item():.4e}"
+            )
+
+        # Where is "To" in the ranking?
+        to_id = idx  # 1249
+        to_logp = step_logprobs[to_id]
+        to_rank = (step_logprobs > to_logp).sum().item() + 1
+        print(f"\n'To' rank: {to_rank}, logp={to_logp.item():.4f}, p={to_logp.exp().item():.4e}")
+
         # Apply mask
         masked = token_logprobs.masked_fill(~completion_mask, 0.0)
         lengths = completion_mask.sum(dim=-1).clamp(min=1)
