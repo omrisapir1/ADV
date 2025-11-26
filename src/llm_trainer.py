@@ -254,11 +254,41 @@ class LLMTrainer:
                 print(f"Reference model exception: {e} will skip this batch.")
                 torch.cuda.empty_cache()
                 continue
-            raise
+
+            loss = self._dpo_loss(pol_pos, pol_neg, ref_pos, ref_neg, beta)
+
+
+
+
+
+            with torch.no_grad():
+                print("\n=== DPO debug ===")
+                print("pol_pos mean:", pol_pos.mean().item(), "std:", pol_pos.std().item())
+                print("pol_neg mean:", pol_neg.mean().item(), "std:", pol_neg.std().item())
+                if "ref_pos" in locals():
+                    print("ref_pos mean:", ref_pos.mean().item(), "std:", ref_pos.std().item())
+                    print("ref_neg mean:", ref_neg.mean().item(), "std:", ref_neg.std().item())
+
+                delta = beta * ((pol_pos - pol_neg) - (ref_pos - ref_neg))
+                print("delta mean:", delta.mean().item(), "std:", delta.std().item())
+                print("loss:", loss.item())
+
+                # Gradient norm
+                total_norm = 0.0
+                for p in self.model.parameters():
+                    if p.grad is not None:
+                        param_norm = p.grad.data.norm(2)
+                        total_norm += param_norm.item() ** 2
+                total_norm = total_norm ** 0.5
+                print("grad norm:", total_norm)
+
+                # Current LR
+                for i, g in enumerate(self.optimizer.param_groups):
+                    print(f"param_group {i} lr:", g["lr"])
 
             # ---- DPO loss ----
             # scale by total number of mini-batches so total gradient matches one big batch
-            loss = self._dpo_loss(pol_pos, pol_neg, ref_pos, ref_neg, beta)
+
             total_loss_val += float(loss.detach().cpu().item())
             num_batches += 1
 

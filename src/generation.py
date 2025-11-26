@@ -43,7 +43,6 @@ class AsyncSGLangEngineWrapper:
     ) -> List[tuple[str, int]]:
         """Two-phase generation for a single prompt."""
         payload_extra_1 = {"top_k": think_top_k, "repetition_penalty": think_repetition_penalty}
-        print(base_prompt)
         resp1 = await self.client.completions.create(
             model=self.model_name,
             prompt=base_prompt,
