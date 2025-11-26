@@ -61,3 +61,11 @@ def create_scheduler(optimizer: torch.optim.Optimizer, total_steps: int, config:
 
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
+def soft_reset_adam(optimizer: torch.optim.Optimizer, reset_m=True, reset_v=False):
+    for group in optimizer.param_groups:
+        for p in group['params']:
+            state = optimizer.state[p]
+            if reset_m and 'exp_avg' in state:
+                state['exp_avg'].zero_()
+            if reset_v and 'exp_avg_sq' in state:
+                state['exp_avg_sq'].zero_()

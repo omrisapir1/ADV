@@ -17,6 +17,7 @@ from .generation import build_sglang_engine
 from .reward_model import load_reward_model
 from .answer_parse import compute_final_correctness
 from .llm_trainer import load_llm_trainer
+from .optimizer import soft_reset_adam
 from .evaluation import run_full_evaluation  # added import
 
 import time
@@ -477,7 +478,7 @@ async def training_loop(config: Dict[str, Any]):
             print(f'[Step {step}] Accuracy: {accuracy_mean:.4f} (Δ {accuracy_change:.4f}), Pass1: {pass1_mean:.4f} (Δ {pass1_change:.4f}), Not improved steps: {not_improved_steps}')
 
         if step == start_explore_at:
-
+            soft_reset_adam(llm_trainer.optimizer)
             gamma = explore_gamma
             print(f"[Step {step}] Starting exploration phase. gamma = {gamma:.2f}")
             exploration_mode = True
@@ -488,12 +489,14 @@ async def training_loop(config: Dict[str, Any]):
             not_improved_steps = 0
             if exploration_mode:
                 gamma = exploit_gamma
+                soft_reset_adam(llm_trainer.optimizer)
                 print(f"[Step {step}] Reached max not improved steps; stopping exploration phase.  gamma = {gamma:.2f}")
                 exploration_mode = False
                 rm_model.update_ref_model()
                 print(f"[RM@Step {step}] Updated reference model.")
 
             else:
+                soft_reset_adam(llm_trainer.optimizer)
                 exploration_mode = True
                 gamma = explore_gamma
                 print(f"[Step {step}] Reached max not improved steps; stopping exploitation phase and starting exploration phase. gamma = {gamma:.2f}")
@@ -526,7 +529,7 @@ async def training_loop(config: Dict[str, Any]):
         if not triplets_for_rm:
             continue
 
-        if (not exploration_mode) or step % rm_train_in_explore_every == 0:
+        if step < start_explore_at or step % rm_train_in_explore_every == 0:
 
             try:
                 rm_avg_loss = rm_model.train_step(triplets_for_rm)
@@ -537,7 +540,7 @@ async def training_loop(config: Dict[str, Any]):
             rm_avg_loss = 0.0
 
         try:
-            llm_avg_loss = llm_trainer.train_step_bt(triplets_for_llm)
+            llm_avg_loss = llm_trainer.train_step(triplets_for_llm)
 
         except Exception as e:
             print(f"[Step {step}] Exception during LLM training: {e} will skip")
