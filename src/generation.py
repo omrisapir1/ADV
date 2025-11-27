@@ -68,29 +68,18 @@ class AsyncSGLangEngineWrapper:
             return results
         payload_extra_2 = {"top_k": 0, "repetition_penalty": 1.0}
         async def _greedy(ctx: str):
-            try:
-                return await self.client.completions.create(
-                    model=self.model_name,
-                    prompt=ctx,
-                    n=1,
-                    temperature=0.0,
-                    top_p=1.0,
-                    max_tokens=answer_max_new_tokens,
-                    stop=answer_stop if answer_stop else None,
-                    extra_body=payload_extra_2,
-                )
-            except :
-                print('Proba;y reached time out will re-try in 10 seconds')
-                await asyncio.sleep(10)
-                return await self.client.completions.create(
-                    model=self.model_name,
-                    prompt=ctx,
-                    n=1,
-                    temperature=0.0,
-                    top_p=1.0,
-                    max_tokens=answer_max_new_tokens,
-                    stop=answer_stop if answer_stop else None,
-                )
+
+            return await self.client.completions.create(
+                model=self.model_name,
+                prompt=ctx,
+                n=1,
+                temperature=0.0,
+                top_p=1.0,
+                max_tokens=answer_max_new_tokens,
+                stop=answer_stop if answer_stop else None,
+                extra_body=payload_extra_2,
+            )
+
         tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx in phase2_items]
         resp2_list = await asyncio.gather(*tasks)
         for (idx, think_clean, _), resp2 in zip(phase2_items, resp2_list):
@@ -116,6 +105,7 @@ class AsyncSGLangEngineWrapper:
         TIMEOUT_SEC = gen_cfg.get("timeout", 280)
         tasks = []
         for p in prompts:
+
             coro = self._two_phase_for_one_prompt(
                 p,
                 n_samples=n_samples,

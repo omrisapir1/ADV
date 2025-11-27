@@ -389,20 +389,10 @@ async def training_loop(config: Dict[str, Any]):
     gamma = exploit_gamma
     exploration_mode = False
 
-    rm_model.load_model(rm_save_path)
-    rm_model.update_ref_model()
-    llm_trainer.load_model(tmp_weights_path)
-
-
     print(f'Starting at gamma = {gamma:.2f}')
     for step in range(num_steps):
-        if step < 40:
-            continue
         if step % rm_save_every_steps == 0 :
             rm_model.save_model(rm_save_path)
-
-
-
         # LLM trainer reference refresh
         if evaluation_config and (step > 0 or evaluation_config['at_start']) and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
