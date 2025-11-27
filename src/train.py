@@ -13,7 +13,7 @@ from typing import Dict, Any, List, Tuple, Optional
 from datasets import load_dataset
 from transformers import AutoTokenizer
 from .prompting import build_prompts
-from .generation import build_sglang_engine
+from .generation import build_sglang_engine, EngineCircuitBreaker  # added EngineCircuitBreaker import
 from .reward_model import load_reward_model
 from .answer_parse import compute_final_correctness
 from .llm_trainer import load_llm_trainer
@@ -341,6 +341,10 @@ async def _async_hot_swap(engine, path: str):
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, engine.hot_swap, path)
 
+async def _async_flush_cache(url: str):  # new helper
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, requests.post, url)
+
 
 
 
@@ -399,7 +403,7 @@ async def training_loop(config: Dict[str, Any]):
                 engine, rm_model, test_ds, q_field, a_field, tokenizer, generation_config, evaluation_config, rm_config
             )
             print(f"[Eval@Step {step}] {json.dumps(eval_res, indent=2)}")
-            response = requests.post(url)
+            await _async_flush_cache(url)
 
         if step == rm_update_step:
             print(f"[RM@Step {step}] Updating reference model.")
@@ -423,31 +427,41 @@ async def training_loop(config: Dict[str, Any]):
                 break  # success
             except asyncio.TimeoutError:
                 print(f"[Step {step}] Generation timeout after {timeout_seconds}s (attempt {attempt+1}/2). Retrying..." if attempt == 0 else f"[Step {step}] Generation timeout after second attempt; skipping step.")
+                torch.cuda.empty_cache()
+                await _async_flush_cache(url)
+                engine = build_sglang_engine(llm_name, generation_config)
+            except EngineCircuitBreaker as e:  # specific handling
+                print(f"[Step {step}] Circuit breaker tripped: {e}. Recreating engine (attempt {attempt+1}/2).")
+                torch.cuda.empty_cache()
+                await _async_flush_cache(url)
+                engine = build_sglang_engine(llm_name, generation_config)
             except Exception as e:
                 print(f"[Step {step}] Generation failed (attempt {attempt+1}/2): {e}" if attempt == 0 else f"[Step {step}] Generation failed again: {e}; skipping step.")
                 torch.cuda.empty_cache()
-                response = requests.post(url)
+                await _async_flush_cache(url)
                 engine = build_sglang_engine(llm_name, generation_config)
             if raw_candidates is None and attempt == 1:
-                # Failed both attempts; skip rest of this training step
                 continue  # will hit loop 'continue' below
         if raw_candidates is None:
-            # Skip this iteration due to generation failure
             continue
         print(f"[Step {step}] Generation time: {time.time() - st:.2f}s")
+        # Engine metrics logging
+        try:
+            m = engine.get_metrics()
+            print(f"[Step {step}] Engine metrics: req={m['total_requests']} timeouts={m['timeouts']} errors={m['errors']} in_flight={m['in_flight']} phase2_batches={m['phase2_batches']} cb_trips={m['circuit_breaker_trips']}")
+        except Exception:
+            pass
 
-
-        response = requests.post(url)
+        await _async_flush_cache(url)
         if last_save_task is not None:
             await last_save_task  # wait for save completion
             last_save_task = None
-            # hot-swap freshly saved weights before new generation
             last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
 
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
         candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers)
-        pass1 = [(any(c ==1 for c in cs)) for cs in correctness]
+        pass1 = [(any(c == 1 for c in cs)) for cs in correctness]
         accuracy_mean = np.mean([np.mean([c == 1 for c in cs]) for cs in correctness])
         pass1_mean = np.mean(pass1)
         if step == 0:
@@ -457,7 +471,7 @@ async def training_loop(config: Dict[str, Any]):
             last_pass1_change = 0
             not_improved_steps = 0
         elif step == 1:
-            not_improved_steps += int((accuracy_mean < last_accuracy) and (pass1 < last_pass1))
+            not_improved_steps += int((accuracy_mean < last_accuracy) and (pass1_mean < last_pass1))
             last_accuracy_change = min(accuracy_mean - last_accuracy, 0)
             last_pass1_change = min(pass1_mean - last_pass1, 0)
         else:
@@ -479,7 +493,6 @@ async def training_loop(config: Dict[str, Any]):
             gamma = explore_gamma
             print(f"[Step {step}] Starting exploration phase. gamma = {gamma:.2f}")
             exploration_mode = True
-
             not_improved_steps = 0
 
         if step > start_explore_at and not_improved_steps == not_improve_steps_limit:
@@ -491,43 +504,36 @@ async def training_loop(config: Dict[str, Any]):
                 exploration_mode = False
                 rm_model.update_ref_model()
                 print(f"[RM@Step {step}] Updated reference model.")
-
             else:
                 soft_reset_adam(llm_trainer.optimizer)
                 exploration_mode = True
                 gamma = explore_gamma
                 print(f"[Step {step}] Reached max not improved steps; stopping exploitation phase and starting exploration phase. gamma = {gamma:.2f}")
 
-
-
-        questions, gold_answers, candidates, correctness_filtered_list = filter_and_select_mixed(
+        # Filter invalid candidates and choose mixed correctness subset
+        questions_f, gold_answers_f, candidates_f, correctness_filtered_list = filter_and_select_mixed(
             questions, gold_answers, candidate_texts, candidate_valid_flags, correctness
         )
-        if not questions:
+        if not questions_f:
             continue
-        max_k = max((len(row) for row in candidates), default=0)
-        correctness_tensor = torch.zeros(len(candidates), max_k, dtype=torch.int32)
+        max_k = max((len(row) for row in candidates_f), default=0)
+        correctness_tensor = torch.zeros(len(candidates_f), max_k, dtype=torch.int32)
         for qi, row in enumerate(correctness_filtered_list):
             correctness_tensor[qi, :len(row)] = torch.tensor(row, dtype=torch.int32)
         st = time.time()
-
         try:
-            rm_scores_model, rm_scores_ref = rm_model.score_reference(questions, candidates, rm_config)
+            rm_scores_model, rm_scores_ref = rm_model.score_reference(questions_f, candidates_f, rm_config)
         except Exception as e:
             print(f"[Step {step}] Exception during RM scoring: {e} will retry batch with 0.25 batch size.")
             torch.cuda.empty_cache()
-            rm_scores_model, rm_scores_ref = rm_model.score_reference(questions, candidates, rm_config, forced_small_batch_size=True)
+            rm_scores_model, rm_scores_ref = rm_model.score_reference(questions_f, candidates_f, rm_config, forced_small_batch_size=True)
         print(f"[Step {step}] RM Scoring time: {time.time() - st:.2f}s")
         torch.cuda.empty_cache()
-        rm_scores = rm_scores_model  # keep original variable name for downstream usage
-        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions, candidates, correctness_tensor, rm_scores, rm_scores_ref, gamma)
-
-
+        rm_scores = rm_scores_model
+        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions_f, candidates_f, correctness_tensor, rm_scores, rm_scores_ref, gamma)
         if not triplets_for_rm:
             continue
-
         if step < start_explore_at or step % rm_train_in_explore_every == 0:
-
             try:
                 rm_avg_loss = rm_model.train_step(triplets_for_rm)
             except Exception as e:
@@ -535,27 +541,17 @@ async def training_loop(config: Dict[str, Any]):
                 rm_avg_loss = 0.0
         else:
             rm_avg_loss = 0.0
-
         try:
             llm_avg_loss = llm_trainer.train_step(triplets_for_llm)
-
         except Exception as e:
             print(f"[Step {step}] Exception during LLM training: {e} will skip")
             llm_avg_loss = 0.0
-
-
         print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
-
-        log_questions(questions, gold_answers, candidates, rm_scores_model, rm_scores_ref, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1)
-
-        # ---- ASYNC SAVE (end of iteration) ----
-        # Before starting new save ensure earlier hot swap is done (we awaited it already above before generation).
-        # Launch save task so disk write can overlap with next RM scoring & other CPU work.
+        log_questions(questions_f, gold_answers_f, candidates_f, rm_scores_model, rm_scores_ref, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1)
         if last_swap_task is not None:
             await last_swap_task
         last_save_task = asyncio.create_task(_async_save_model(llm_trainer, tmp_weights_path))
 
-    # Final wait to ensure last save completes.
     if last_save_task is not None:
         await last_save_task
 
@@ -563,4 +559,3 @@ async def training_loop(config: Dict[str, Any]):
 def run(config_path: str):
     config = load_config(config_path)
     asyncio.run(training_loop(config))
-

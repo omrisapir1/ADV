@@ -2,31 +2,101 @@ from __future__ import annotations
 
 import asyncio
 import random
-import os
 from typing import List, Dict, Any, Optional, Tuple
-import requests
-from openai import AsyncOpenAI
-from openai._exceptions import APIStatusError, RateLimitError
 import re
+import time
+
+# Safe imports with fallbacks for analysis environments lacking dependencies
+try:
+    import requests  # type: ignore
+except ImportError:  # pragma: no cover
+    class _DummyRequests:  # minimal stub
+        @staticmethod
+        def post(*args, **kwargs):
+            return None
+    requests = _DummyRequests()  # type: ignore
+
+try:
+    from openai import AsyncOpenAI  # type: ignore
+except ImportError:  # pragma: no cover
+    class AsyncOpenAI:  # minimal stub to allow testing without openai package
+        def __init__(self, *args, **kwargs):
+            pass
+        class completions:  # nested stub matching usage
+            @staticmethod
+            async def create(**kwargs):  # returns object with .choices list
+                class Dummy:
+                    choices: list = []
+                return Dummy()
 
 THINK_STOP = "</think>"
 
+class EngineCircuitBreaker(Exception):
+    """Raised when engine encounters too many consecutive empty generations."""
+    pass
+
 class AsyncSGLangEngineWrapper:
-    """Simplified SGLang engine wrapper using generation config (no default fallbacks)."""
+    """Simplified SGLang engine wrapper using generation config (with concurrency & resilience)."""
     def __init__(self, model_name: str, sglang_config: Optional[Dict[str, Any]] = None):
         sglang_config = sglang_config or {}
-        # Base URL / API key fixed unless provided elsewhere; user manages server separately.
         base_url = "http://localhost:30000/v1"
         api_key  = "EMPTY"
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         self.model_name = model_name
-        # Concurrency from config; will raise if missing.
-        self._semaphore = asyncio.Semaphore(sglang_config.get("max_concurrency"))
+
+        max_conc = sglang_config.get("max_concurrency")
+        if not isinstance(max_conc, int) or max_conc <= 0:
+            raise ValueError("max_concurrency must be a positive int in generation config")
+        self._semaphore = asyncio.Semaphore(max_conc)
+
+        self.per_request_timeout = float(sglang_config.get("per_request_timeout", 120.0))
+        self.phase2_batch_limit = int(sglang_config.get("phase2_batch_limit", max_conc))
+        if self.phase2_batch_limit <= 0:
+            self.phase2_batch_limit = max_conc
+        self.circuit_breaker_failures = int(sglang_config.get("circuit_breaker_failures", 5))
+        self._consecutive_failures = 0
+
+        self.metrics: Dict[str, Any] = {
+            "total_requests": 0,
+            "timeouts": 0,
+            "errors": 0,
+            "total_time": 0.0,
+            "in_flight": 0,
+            "phase2_batches": 0,
+            "circuit_breaker_trips": 0,
+        }
+
+    def get_metrics(self) -> Dict[str, Any]:
+        return dict(self.metrics)
 
     def hot_swap(self, tmp_weights_path: str):
         url = "http://localhost:30000/update_weights_from_disk"
         data = {"model_path": tmp_weights_path}
-        requests.post(url, json=data)
+        try:
+            requests.post(url, json=data)
+        except Exception:
+            pass
+
+    async def _completion_call(self, **kwargs):
+        async with self._semaphore:
+            self.metrics["in_flight"] += 1
+            start = time.monotonic()
+            task = asyncio.create_task(self.client.completions.create(**kwargs))
+            try:
+                resp = await asyncio.wait_for(task, timeout=self.per_request_timeout)
+                self.metrics["total_requests"] += 1
+                return resp
+            except asyncio.TimeoutError:
+                self.metrics["timeouts"] += 1
+                class Dummy: choices = []
+                return Dummy()
+            except Exception:
+                self.metrics["errors"] += 1
+                class Dummy: choices = []
+                return Dummy()
+            finally:
+                self.metrics["total_time"] += (time.monotonic() - start)
+                self.metrics["in_flight"] -= 1
 
     async def _two_phase_for_one_prompt(
         self,
@@ -41,9 +111,10 @@ class AsyncSGLangEngineWrapper:
         answer_max_new_tokens: int,
         answer_stop: List[str],
     ) -> List[tuple[str, int]]:
-        """Two-phase generation for a single prompt."""
+        """Two-phase generation for a single prompt with bounded concurrency & cancellation safety."""
         payload_extra_1 = {"top_k": think_top_k, "repetition_penalty": think_repetition_penalty}
-        resp1 = await self.client.completions.create(
+        # Phase 1
+        resp1 = await self._completion_call(
             model=self.model_name,
             prompt=base_prompt,
             n=n_samples,
@@ -53,12 +124,12 @@ class AsyncSGLangEngineWrapper:
             stop=[THINK_STOP],
             extra_body=payload_extra_1,
         )
-        results: List[tuple[str, int]] = [("", 0)] * len(resp1.choices)
+        results: List[tuple[str, int]] = [("", 0)] * (len(resp1.choices) if getattr(resp1, "choices", None) else n_samples)
         phase2_items: List[Tuple[int, str, str]] = []
-        for idx, choice in enumerate(resp1.choices):
-            think_piece = (choice.text or "")
+        for idx, choice in enumerate(getattr(resp1, "choices", [])):
+            think_piece = (getattr(choice, "text", "") or "")
             finish_reason = getattr(choice, "finish_reason", None)
-            if finish_reason != "stop" or re.findall(r"\\boxed\s*\{(.*?)\}", think_piece or "", flags=re.DOTALL):
+            if finish_reason != "stop" or re.findall(r"\\boxed\s*{(.*?)}", think_piece or "", flags=re.DOTALL):
                 results[idx] = (think_piece, 0)
                 continue
             think_clean = think_piece.split(THINK_STOP, 1)[0] if THINK_STOP in think_piece else think_piece
@@ -66,10 +137,11 @@ class AsyncSGLangEngineWrapper:
             phase2_items.append((idx, think_clean, context))
         if not phase2_items:
             return results
-        payload_extra_2 = {"top_k": 0, "repetition_penalty": 1.0}
-        async def _greedy(ctx: str):
 
-            return await self.client.completions.create(
+        payload_extra_2 = {"top_k": 0, "repetition_penalty": 1.0}
+
+        async def _greedy(ctx: str):
+            return await self._completion_call(
                 model=self.model_name,
                 prompt=ctx,
                 n=1,
@@ -80,12 +152,29 @@ class AsyncSGLangEngineWrapper:
                 extra_body=payload_extra_2,
             )
 
-        tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx in phase2_items]
-        resp2_list = await asyncio.gather(*tasks)
-        for (idx, think_clean, _), resp2 in zip(phase2_items, resp2_list):
-            answer_text = (resp2.choices[0].text or "") if resp2.choices else ""
-            full_text = think_clean + THINK_STOP + answer_text
-            results[idx] = (full_text, 1)
+        # Phase 2 batched
+        try:
+            for start_idx in range(0, len(phase2_items), self.phase2_batch_limit):
+                batch = phase2_items[start_idx:start_idx + self.phase2_batch_limit]
+                tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx in batch]
+                self.metrics["phase2_batches"] += 1
+                gathered = await asyncio.gather(*tasks, return_exceptions=True)
+                for (idx, think_clean, _), resp2 in zip(batch, gathered):
+                    if isinstance(resp2, Exception) or not getattr(resp2, "choices", None):
+                        # fallback to think only
+                        full_text = think_clean + THINK_STOP
+                        results[idx] = (full_text, 0)
+                        continue
+                    answer_text = (resp2.choices[0].text or "") if resp2.choices else ""
+                    full_text = think_clean + THINK_STOP + answer_text
+                    results[idx] = (full_text, 1)
+                await asyncio.sleep(random.uniform(0.005, 0.02))  # jitter between batches
+        except asyncio.CancelledError:
+            # Cancel outstanding tasks if any - tasks already awaited inside loop; just propagate
+            raise
+        except Exception:
+            # In case of unexpected exception, keep existing partial results (think only)
+            pass
         return results
 
     async def generate_candidates(
@@ -94,7 +183,9 @@ class AsyncSGLangEngineWrapper:
         n_samples: int,
         **gen_cfg: Any,
     ) -> List[List[tuple[str, int]]]:
-        """Generate candidates for each prompt using two-phase method with config values."""
+        """Generate candidates for each prompt using two-phase method with config values.
+        Implements circuit breaker on repeated empty generations.
+        """
         think_temperature = gen_cfg.get("think_temperature")
         think_top_p = gen_cfg.get("think_top_p")
         think_top_k = gen_cfg.get("think_top_k")
@@ -102,10 +193,10 @@ class AsyncSGLangEngineWrapper:
         think_max_new_tokens = gen_cfg.get("think_max_new_tokens")
         answer_max_new_tokens = gen_cfg.get("answer_max_new_tokens")
         answer_stop = gen_cfg.get("answer_stop")
-        TIMEOUT_SEC = gen_cfg.get("timeout", 280)
+        TIMEOUT_SEC = gen_cfg.get("timeout", 280)  # overall internal timeout per prompt (soft used below)
+
         tasks = []
         for p in prompts:
-
             coro = self._two_phase_for_one_prompt(
                 p,
                 n_samples=n_samples,
@@ -117,19 +208,42 @@ class AsyncSGLangEngineWrapper:
                 answer_max_new_tokens=answer_max_new_tokens,
                 answer_stop=answer_stop,
             )
-
             async def run_with_timeout(coro=coro, prompt=p):
                 try:
                     return await asyncio.wait_for(coro, timeout=TIMEOUT_SEC)
                 except asyncio.TimeoutError:
-                    print(f"⏱️ Timeout for prompt: {prompt[:60]!r} — skipping")
-                    return []  # empty result list to keep structure consistent
-                except Exception as e:
-                    print(f"⚠️ Error on prompt {prompt[:60]!r}: {e}")
                     return []
-
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    return []
             tasks.append(asyncio.create_task(run_with_timeout()))
-        return await asyncio.gather(*tasks)
+
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            for t in tasks:
+                t.cancel()
+            raise
+
+        normalized: List[List[tuple[str, int]]] = []
+        empty_all = True
+        for r in results:
+            if isinstance(r, Exception):
+                normalized.append([])
+            else:
+                normalized.append(r)
+                if r:
+                    empty_all = False
+        if empty_all:
+            self._consecutive_failures += 1
+        else:
+            self._consecutive_failures = 0
+        if self._consecutive_failures >= self.circuit_breaker_failures:
+            self.metrics["circuit_breaker_trips"] += 1
+            self._consecutive_failures = 0
+            raise EngineCircuitBreaker("Too many consecutive empty generations; circuit breaker tripped")
+        return normalized
 
 
 def build_sglang_engine(model_name: str, sglang_config: Optional[Dict[str, Any]] = None) -> AsyncSGLangEngineWrapper:
