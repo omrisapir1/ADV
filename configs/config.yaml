@@ -41,10 +41,10 @@ generation:
   think_top_p: 0.96
   think_top_k: 200
   think_repetition_penalty: 1.1
-  think_max_new_tokens: 1524
+  think_max_new_tokens: 2048
 
   # ---- Phase 2 (answer / greedy) ----
-  answer_max_new_tokens: 500
+  answer_max_new_tokens: 150
   answer_stop: []
 
 hardware:
