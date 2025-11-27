@@ -6,28 +6,9 @@ from typing import List, Dict, Any, Optional, Tuple
 import re
 import time
 
-# Safe imports with fallbacks for analysis environments lacking dependencies
-try:
-    import requests  # type: ignore
-except ImportError:  # pragma: no cover
-    class _DummyRequests:  # minimal stub
-        @staticmethod
-        def post(*args, **kwargs):
-            return None
-    requests = _DummyRequests()  # type: ignore
+import requests
+from openai import AsyncOpenAI
 
-try:
-    from openai import AsyncOpenAI  # type: ignore
-except ImportError:  # pragma: no cover
-    class AsyncOpenAI:  # minimal stub to allow testing without openai package
-        def __init__(self, *args, **kwargs):
-            pass
-        class completions:  # nested stub matching usage
-            @staticmethod
-            async def create(**kwargs):  # returns object with .choices list
-                class Dummy:
-                    choices: list = []
-                return Dummy()
 
 THINK_STOP = "</think>"
 
