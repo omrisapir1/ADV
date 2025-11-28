@@ -56,8 +56,10 @@ class LLMTrainer:
 
         self.reference_model.config.pad_token_id = self.tokenizer.pad_token_id
 
-        self.optimizer = create_optimizer(self, config=config)
-        self.scheduler = create_scheduler(self.optimizer, num_steps, config=config)
+        self.explore_optimizer = create_optimizer(self, config=config, lr_amplify=10)
+        self.exploit_optimizer = create_optimizer(self, config=config)
+        self.explore_scheduler = create_scheduler(self.explore_optimizer, num_steps, config=config)
+        self.exploit_scheduler = create_scheduler(self.exploit_optimizer, num_steps, config=config)
         self.model.gradient_checkpointing_enable()
 
     @torch.no_grad()
@@ -181,7 +183,9 @@ class LLMTrainer:
         return -F.logsigmoid(logits).mean()
 
 
-    def train_step(self, triplets: List[Tuple[str, str, str]]) -> float:
+    def train_step(self, triplets: List[Tuple[str, str, str]],
+                   optimizer: torch.optim.Optimizer,
+                   scheduler) -> float:
         """
         triplets: list of (prompt_question, chosen_completion, rejected_completion)
         Trains in mini-batches using config['batch_size'] (default 1).
@@ -204,7 +208,7 @@ class LLMTrainer:
         num_batches = 0
 
         # start a fresh grad buffer
-        self.optimizer.zero_grad(set_to_none=True)
+        optimizer.zero_grad(set_to_none=True)
 
         # loop mini-batches
         for start in range(0, len(triplets), train_batch_size):
@@ -267,14 +271,14 @@ class LLMTrainer:
             # We'll divide later after counting batches (see below).
             # clip & step ONCE
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
-            self.optimizer.step()
+            optimizer.step()
 
-            self.optimizer.zero_grad(set_to_none=True)
+            optimizer.zero_grad(set_to_none=True)
             del loss, pol_pos, pol_neg, ref_pos, ref_neg
             del batch_pos, batch_neg, comp_mask_pos, comp_mask_neg, templated_prompts, prompt_lens
             # NOTE: empty_cache() does not free reserved memory to the OS, but can reduce fragmentation
             torch.cuda.empty_cache()
-        self.scheduler.step()
+        scheduler.step()
         return total_loss_val / max(1, num_batches)
 
     def save_model(self, tmp_weights_path: str):

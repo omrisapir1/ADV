@@ -489,7 +489,8 @@ async def training_loop(config: Dict[str, Any]):
             print(f'[Step {step}] Accuracy: {accuracy_mean:.4f} (Δ {accuracy_change:.4f}), Pass1: {pass1_mean:.4f} (Δ {pass1_change:.4f}), Not improved steps: {not_improved_steps}')
 
         if step == start_explore_at:
-            soft_reset_adam(llm_trainer.optimizer)
+            soft_reset_adam(llm_trainer.explore_optimizer)
+            soft_reset_adam(llm_trainer.exploit_optimizer)
             gamma = explore_gamma
             print(f"[Step {step}] Starting exploration phase. gamma = {gamma:.2f}")
             exploration_mode = True
@@ -499,13 +500,15 @@ async def training_loop(config: Dict[str, Any]):
             not_improved_steps = 0
             if exploration_mode:
                 gamma = exploit_gamma
-                soft_reset_adam(llm_trainer.optimizer)
+                soft_reset_adam(llm_trainer.explore_optimizer)
+                soft_reset_adam(llm_trainer.exploit_optimizer)
                 print(f"[Step {step}] Reached max not improved steps; stopping exploration phase.  gamma = {gamma:.2f}")
                 exploration_mode = False
                 rm_model.update_ref_model()
                 print(f"[RM@Step {step}] Updated reference model.")
             else:
-                soft_reset_adam(llm_trainer.optimizer)
+                soft_reset_adam(llm_trainer.explore_optimizer)
+                soft_reset_adam(llm_trainer.exploit_optimizer)
                 exploration_mode = True
                 gamma = explore_gamma
                 print(f"[Step {step}] Reached max not improved steps; stopping exploitation phase and starting exploration phase. gamma = {gamma:.2f}")
@@ -533,7 +536,7 @@ async def training_loop(config: Dict[str, Any]):
         triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions_f, candidates_f, correctness_tensor, rm_scores, rm_scores_ref, gamma)
         if not triplets_for_rm:
             continue
-        if step < start_explore_at or step % rm_train_in_explore_every == 0:
+        if step < start_explore_at or step % rm_train_in_explore_every == 0 and not exploration_mode:
             try:
                 rm_avg_loss = rm_model.train_step(triplets_for_rm)
             except Exception as e:
@@ -542,7 +545,9 @@ async def training_loop(config: Dict[str, Any]):
         else:
             rm_avg_loss = 0.0
         try:
-            llm_avg_loss = llm_trainer.train_step(triplets_for_llm)
+            llm_avg_loss = llm_trainer.train_step(triplets_for_llm,
+                                                  llm_trainer.explore_optimizer if exploration_mode else llm_trainer.exploit_optimizer,
+                                                  llm_trainer.explore_scheduler if exploration_mode else llm_trainer.exploit_scheduler)
         except Exception as e:
             print(f"[Step {step}] Exception during LLM training: {e} will skip")
             llm_avg_loss = 0.0

@@ -3,7 +3,7 @@ from torch.optim import AdamW
 from typing import Dict, Any
 
 
-def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.optim.Optimizer:
+def create_optimizer(model: torch.nn.Module, config: Dict[str, Any], lr_amplify:int=1) -> torch.optim.Optimizer:
     """Create optimizer based on config (no default values in .get)."""
     optim_config = config.get("optim")
 
@@ -25,7 +25,7 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any]) -> torch.op
 
     name_val = optim_config.get("name")
     if name_val.lower() == "adamw":
-        lr_val = optim_config.get("lr")
+        lr_val = optim_config.get("lr") * lr_amplify
         betas_val = optim_config.get("betas")
         eps_val = optim_config.get("eps")
         optimizer = AdamW(
