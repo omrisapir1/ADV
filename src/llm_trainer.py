@@ -56,7 +56,7 @@ class LLMTrainer:
 
         self.reference_model.config.pad_token_id = self.tokenizer.pad_token_id
 
-        self.explore_optimizer = create_optimizer(self, config=config, lr_amplify=10)
+        self.explore_optimizer = create_optimizer(self, config=config, lr_amplify=5)
         self.exploit_optimizer = create_optimizer(self, config=config)
         self.explore_scheduler = create_scheduler(self.explore_optimizer, num_steps, config=config)
         self.exploit_scheduler = create_scheduler(self.exploit_optimizer, num_steps, config=config)
