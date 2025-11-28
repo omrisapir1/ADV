@@ -25,7 +25,7 @@ def create_optimizer(model: torch.nn.Module, config: Dict[str, Any], lr_amplify:
 
     name_val = optim_config.get("name")
     if name_val.lower() == "adamw":
-        lr_val = optim_config.get("lr") * lr_amplify
+        lr_val = float(optim_config.get("lr")) * lr_amplify
         betas_val = optim_config.get("betas")
         eps_val = optim_config.get("eps")
         optimizer = AdamW(
