@@ -118,7 +118,7 @@ async def run():
         is_healthy = engine.health_check()
     except Exception:
         is_healthy = False
-    print(f"Engine health: {'OK' if is_healthy else 'UNREACHABLE'} at {engine._base_url}")
+    print(f"Engine health: {'OK' if is_healthy else 'UNREACHABLE'} at {engine.base_url}")
     st = time.time()
     rows = await generate_all(engine, tokenizer, questions, gold_answers, settings.n_samples, settings.generation_cfg, settings.batch_size)
     print(f"Generation time: {time.time() - st:.2f}s")
