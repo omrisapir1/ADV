@@ -194,6 +194,7 @@ class AsyncSGLangEngineWrapper:
             # Cancel outstanding tasks if any - tasks already awaited inside loop; just propagate
             raise
         except Exception:
+            raise
             # In case of unexpected exception, keep existing partial results (think only)
             pass
         return results
