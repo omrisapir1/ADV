@@ -70,12 +70,12 @@ class AsyncSGLangEngineWrapper:
                 return resp
             except asyncio.TimeoutError:
                 self.metrics["timeouts"] += 1
-                class Dummy: choices = []
-                return Dummy()
-            except Exception:
+                # Raise with context to debug server reachability
+                raise RuntimeError(f"Chat completion timeout. Payload={payload}")
+            except Exception as e:
                 self.metrics["errors"] += 1
-                class Dummy: choices = []
-                return Dummy()
+                # Raise with context to debug server errors
+                raise RuntimeError(f"Chat completion error: {e}. Payload={payload}")
             finally:
                 self.metrics["total_time"] += (time.monotonic() - start)
                 self.metrics["in_flight"] -= 1
@@ -134,7 +134,10 @@ class AsyncSGLangEngineWrapper:
             logprobs=True,
             top_logprobs=20,
         )
-        results: List[tuple[str, int, float]] = [("", 0, float("nan"))] * (len(resp1.choices) if getattr(resp1, "choices", None) else n_samples)
+        # If no choices, raise to surface issue early
+        if not getattr(resp1, "choices", None):
+            raise RuntimeError("Phase-1 returned no choices; server may be unreachable or misconfigured.")
+        results: List[tuple[str, int, float]] = [("", 0, float("nan"))] * len(resp1.choices)
         phase2_items: List[Tuple[int, str, str, Optional[float]]] = []
         for idx, choice in enumerate(getattr(resp1, "choices", [])):
             think_piece = (getattr(choice, "text", "") or "")
@@ -164,6 +167,7 @@ class AsyncSGLangEngineWrapper:
 
         async def _greedy(ctx: str):
             return await self._completion_call(
+                model=self.model_name,
                 prompt=ctx,
                 n=1,
                 temperature=0.0,
@@ -194,7 +198,6 @@ class AsyncSGLangEngineWrapper:
             # Cancel outstanding tasks if any - tasks already awaited inside loop; just propagate
             raise
         except Exception:
-            raise
             # In case of unexpected exception, keep existing partial results (think only)
             pass
         return results
