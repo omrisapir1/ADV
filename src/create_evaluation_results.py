@@ -87,6 +87,7 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
         prompts = build_prompts(batch_q, tokenizer)
         raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_cfg)
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
+        candidate_entropy = [[c[2] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers[start:end])
         for i, q in enumerate(batch_q):
             row_candidates = candidate_texts[i]
@@ -95,6 +96,7 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
                 "question": q,
                 "gold_answer": gold_answers[start + i],
                 "candidates": row_candidates,
+                "entropies": candidate_entropy[i],
                 "correctness": row_correct,
             })
     return out_rows
