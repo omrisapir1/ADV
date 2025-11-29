@@ -63,6 +63,8 @@ class AsyncSGLangEngineWrapper:
         async with self._semaphore:
             self.metrics["in_flight"] += 1
             start = time.monotonic()
+            # capture for diagnostics without changing payload
+            _debug_payload = dict(kwargs)
             task = asyncio.create_task(self.client.completions.create(**kwargs))
             try:
                 resp = await asyncio.wait_for(task, timeout=self.per_request_timeout)
@@ -71,11 +73,11 @@ class AsyncSGLangEngineWrapper:
             except asyncio.TimeoutError:
                 self.metrics["timeouts"] += 1
                 # Raise with context to debug server reachability
-                raise RuntimeError(f"Chat completion timeout. Payload={payload}")
+                raise RuntimeError(f"Completion timeout. Payload={_debug_payload}")
             except Exception as e:
                 self.metrics["errors"] += 1
                 # Raise with context to debug server errors
-                raise RuntimeError(f"Chat completion error: {e}. Payload={payload}")
+                raise RuntimeError(f"Completion error: {e}. Payload={_debug_payload}")
             finally:
                 self.metrics["total_time"] += (time.monotonic() - start)
                 self.metrics["in_flight"] -= 1
@@ -116,7 +118,7 @@ class AsyncSGLangEngineWrapper:
         think_repetition_penalty: float,
         answer_max_new_tokens: int,
         answer_stop: List[str],
-    ) -> List[tuple[str, int, float]]:
+    ) -> List[tuple[str, int]]:
         """Two-phase generation for a single prompt with bounded concurrency & cancellation safety.
         Returns a list of (full_text, phase_flag, avg_entropy) where phase_flag: 0=think-only, 1=think+answer.
         avg_entropy computed from phase-1 logprobs for the think segment.
@@ -124,20 +126,21 @@ class AsyncSGLangEngineWrapper:
         payload_extra_1 = {"top_k": think_top_k, "repetition_penalty": think_repetition_penalty}
         # Phase 1
         resp1 = await self._completion_call(
+            model=self.model_name,
             prompt=base_prompt,
             n=n_samples,
             temperature=think_temperature,
             top_p=think_top_p,
             max_tokens=think_max_new_tokens,
             stop=[THINK_STOP],
-            extra_body=payload_extra_1,
+            extra_body={"top_k": think_top_k, "repetition_penalty": think_repetition_penalty},
             logprobs=True,
             top_logprobs=20,
         )
-        # If no choices, raise to surface issue early
+        # Raise early if phase-1 produced no choices
         if not getattr(resp1, "choices", None):
-            raise RuntimeError("Phase-1 returned no choices; server may be unreachable or misconfigured.")
-        results: List[tuple[str, int, float]] = [("", 0, float("nan"))] * len(resp1.choices)
+            raise RuntimeError("Phase-1 returned no choices; request may not have reached the server.")
+        results: List[tuple[str, int]] = [("", 0)] * len(resp1.choices)
         phase2_items: List[Tuple[int, str, str, Optional[float]]] = []
         for idx, choice in enumerate(getattr(resp1, "choices", [])):
             think_piece = (getattr(choice, "text", "") or "")
@@ -155,7 +158,7 @@ class AsyncSGLangEngineWrapper:
                 if entropies:
                     avg_entropy = sum(entropies) / len(entropies)
             if finish_reason != "stop" or re.findall(r"\\boxed\s*{(.*?)}", think_piece or "", flags=re.DOTALL):
-                results[idx] = (think_piece, 0, avg_entropy if avg_entropy is not None else float("nan"))
+                results[idx] = (think_piece, 0)
                 continue
             think_clean = think_piece.split(THINK_STOP, 1)[0] if THINK_STOP in think_piece else think_piece
             context = base_prompt + think_clean + THINK_STOP
@@ -188,11 +191,11 @@ class AsyncSGLangEngineWrapper:
                     if isinstance(resp2, Exception) or not getattr(resp2, "choices", None):
                         # fallback to think only
                         full_text = think_clean + THINK_STOP
-                        results[idx] = (full_text, 0, avg_entropy if avg_entropy is not None else float("nan"))
+                        results[idx] = (full_text, 0)
                         continue
                     answer_text = (resp2.choices[0].text or "") if resp2.choices else ""
                     full_text = think_clean + THINK_STOP + answer_text
-                    results[idx] = (full_text, 1, avg_entropy if avg_entropy is not None else float("nan"))
+                    results[idx] = (full_text, 1)
                 await asyncio.sleep(random.uniform(0.005, 0.02))  # jitter between batches
         except asyncio.CancelledError:
             # Cancel outstanding tasks if any - tasks already awaited inside loop; just propagate
@@ -207,7 +210,7 @@ class AsyncSGLangEngineWrapper:
         prompts: List[str],
         n_samples: int,
         **gen_cfg: Any,
-    ) -> List[List[tuple[str, int, float]]]:
+    ) -> List[List[tuple[str, int]]]:
         """Generate candidates for each prompt using two-phase method with config values.
         Implements circuit breaker on repeated empty generations.
         Returns per-prompt list of (full_text, phase_flag, avg_entropy).
@@ -252,7 +255,7 @@ class AsyncSGLangEngineWrapper:
                 t.cancel()
             raise
 
-        normalized: List[List[tuple[str, int, float]]] = []
+        normalized: List[List[tuple[str, int]]] = []
         empty_all = True
         for r in results:
             if isinstance(r, Exception):
