@@ -24,6 +24,8 @@ class AsyncSGLangEngineWrapper:
         api_key  = "EMPTY"
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         self.model_name = model_name
+        # Store the base_url from init for health checks and any direct calls
+        self.base_url = base_url
 
         max_conc = sglang_config.get("max_concurrency")
         if not isinstance(max_conc, int) or max_conc <= 0:
@@ -61,7 +63,7 @@ class AsyncSGLangEngineWrapper:
     def health_check(self) -> bool:
         """Check server health by hitting /models; fallback to /completions echo."""
         try:
-            resp = requests.get(f"{self._base_url}/models", timeout=3)
+            resp = requests.get(f"{self.base_url}/models", timeout=3)
             if resp.status_code == 200:
                 return True
         except Exception:
@@ -74,7 +76,7 @@ class AsyncSGLangEngineWrapper:
                 "max_tokens": 1,
                 "temperature": 0,
             }
-            resp = requests.post(f"{self._base_url}/completions", json=payload, timeout=3)
+            resp = requests.post(f"{self.base_url}/completions", json=payload, timeout=3)
             return resp.status_code == 200
         except Exception:
             return False
