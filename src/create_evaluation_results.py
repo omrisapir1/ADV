@@ -3,7 +3,7 @@ from datasets import load_dataset
 import asyncio
 import yaml
 import os
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from dataclasses import dataclass
 import pandas as pd
 from transformers import AutoTokenizer
@@ -86,8 +86,10 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
         batch_q = questions[start:end]
         prompts = build_prompts(batch_q, tokenizer)
         raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_cfg)
+        # Each candidate is (text, phase) per generation engine
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
-        candidate_entropy = [[c[2] for c in row] for row in raw_candidates]
+        # Entropy not provided by engine; keep placeholder empty lists for compatibility
+        candidate_entropy = [[None for _ in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers[start:end])
         for i, q in enumerate(batch_q):
             row_candidates = candidate_texts[i]
@@ -110,13 +112,19 @@ async def run():
     print(f"Evaluating {len(questions)} questions with {settings.n_samples} samples each (batch_size={settings.batch_size})")
     tokenizer = AutoTokenizer.from_pretrained(settings.llm_name)
     engine = build_sglang_engine(settings.llm_name, settings.generation_cfg)
+    # Quick health check to surface connectivity issues early
+    is_healthy = False
+    try:
+        is_healthy = engine.health_check()
+    except Exception:
+        is_healthy = False
+    print(f"Engine health: {'OK' if is_healthy else 'UNREACHABLE'} at {engine._base_url}")
     st = time.time()
     rows = await generate_all(engine, tokenizer, questions, gold_answers, settings.n_samples, settings.generation_cfg, settings.batch_size)
     print(f"Generation time: {time.time() - st:.2f}s")
-    df = pd.DataFrame(rows, columns=["question", "gold_answer", "candidates", "correctness"])
+    df = pd.DataFrame(rows, columns=["question", "gold_answer", "candidates", "entropies", "correctness"])
     df.to_pickle("evaluation_results.pkl")
 
 
 if __name__ == "__main__":
     asyncio.run(run())
-

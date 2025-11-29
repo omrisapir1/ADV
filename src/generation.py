@@ -58,10 +58,32 @@ class AsyncSGLangEngineWrapper:
         except Exception:
             pass
 
+    def health_check(self) -> bool:
+        """Check server health by hitting /models; fallback to /completions echo."""
+        try:
+            resp = requests.get(f"{self._base_url}/models", timeout=3)
+            if resp.status_code == 200:
+                return True
+        except Exception:
+            pass
+        # Fallback small completion
+        try:
+            payload = {
+                "model": self.model_name,
+                "prompt": "ping",
+                "max_tokens": 1,
+                "temperature": 0,
+            }
+            resp = requests.post(f"{self._base_url}/completions", json=payload, timeout=3)
+            return resp.status_code == 200
+        except Exception:
+            return False
+
     async def _completion_call(self, **kwargs):
         async with self._semaphore:
             self.metrics["in_flight"] += 1
             start = time.monotonic()
+            # First try OpenAI client
             task = asyncio.create_task(self.client.completions.create(**kwargs))
             try:
                 resp = await asyncio.wait_for(task, timeout=self.per_request_timeout)
