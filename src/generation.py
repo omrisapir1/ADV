@@ -21,7 +21,7 @@ class AsyncSGLangEngineWrapper:
     """Simplified SGLang engine wrapper using generation config (with concurrency & resilience)."""
     def __init__(self, model_name: str, sglang_config: Optional[Dict[str, Any]] = None):
         sglang_config = sglang_config or {}
-        base_url = "http://localhost:30000"  # use root; client adds /v1
+        base_url = "http://localhost:30000/v1"  # use root; client adds /v1
         api_key  = "EMPTY"
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         self.model_name = model_name
