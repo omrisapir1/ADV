@@ -266,7 +266,9 @@ class AsyncSGLangEngineWrapper:
         if self._consecutive_failures >= self.circuit_breaker_failures:
             self.metrics["circuit_breaker_trips"] += 1
             self._consecutive_failures = 0
-            raise EngineCircuitBreaker("Too many consecutive empty generations; circuit breaker tripped")
+            # allow disabling circuit breaker raising via config
+            if not gen_cfg.get("disable_circuit_breaker", False):
+                raise EngineCircuitBreaker("Too many consecutive empty generations; circuit breaker tripped")
         return normalized
 
 
