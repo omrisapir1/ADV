@@ -21,7 +21,7 @@ class AsyncSGLangEngineWrapper:
     """Simplified SGLang engine wrapper using generation config (with concurrency & resilience)."""
     def __init__(self, model_name: str, sglang_config: Optional[Dict[str, Any]] = None):
         sglang_config = sglang_config or {}
-        base_url = "http://localhost:30000/v1"  # use root; client adds /v1
+        base_url = "http://localhost:30000/v1"
         api_key  = "EMPTY"
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         self.model_name = model_name
@@ -63,27 +63,7 @@ class AsyncSGLangEngineWrapper:
         async with self._semaphore:
             self.metrics["in_flight"] += 1
             start = time.monotonic()
-            # Build chat messages from prompt
-            prompt_text = kwargs.pop("prompt", "")
-            messages = kwargs.pop("messages", None)
-            if messages is None:
-                messages = [{"role": "user", "content": prompt_text}]
-            # Map common args
-            payload = dict(
-                model=self.model_name,
-                messages=messages,
-                n=kwargs.pop("n", 1),
-                temperature=kwargs.pop("temperature", 0.0),
-                top_p=kwargs.pop("top_p", 1.0),
-                max_tokens=kwargs.pop("max_tokens", None),
-                stop=kwargs.pop("stop", None),
-                logprobs=kwargs.pop("logprobs", False),
-                top_logprobs=kwargs.pop("top_logprobs", None),
-            )
-            extra_body = kwargs.pop("extra_body", None)
-            if extra_body:
-                payload["extra_body"] = extra_body
-            task = asyncio.create_task(self.client.chat.completions.create(**payload))
+            task = asyncio.create_task(self.client.completions.create(**kwargs))
             try:
                 resp = await asyncio.wait_for(task, timeout=self.per_request_timeout)
                 self.metrics["total_requests"] += 1
