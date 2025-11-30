@@ -49,20 +49,9 @@ class AceMathRewardModel:
         self.model.eval()
 
         # Create frozen reference PRM model
-        self.ref_model = AutoModel.from_pretrained(
-            model_name,
-            torch_dtype=torch.bfloat16,
-            trust_remote_code=True,
-        ).to(self.device)
-        # Removed strict .score validation
-        self.ref_model.config.pad_token_id = self.tokenizer.pad_token_id
-        for p in self.ref_model.parameters():
-            p.requires_grad = False
-        self.ref_model.eval()
 
         self.pool_token_id = self.tokenizer.convert_tokens_to_ids("</think>")
         self.model.pool_id = self.pool_token_id
-        self.ref_model.pool_id = self.pool_token_id
 
         self.optimizer = None
         self.scheduler = None
@@ -87,7 +76,6 @@ class AceMathRewardModel:
         torch.save(
             {
                 "model_state": self.model.state_dict(),
-                "ref_model_state": self.ref_model.state_dict(),
                 "optimizer_state": self.optimizer.state_dict() if self.optimizer else None,
                 "scheduler_state": self.scheduler.state_dict() if self.scheduler else None,
                 "config": self.rm_config,
@@ -95,13 +83,6 @@ class AceMathRewardModel:
             os.path.join(path, "reward_model.pt"),
         )
 
-    def update_ref_model(self):
-        """Refresh the frozen reference model weights from the current trained model.
-        Keeps params frozen; used when rm_config.update_ref_model_every > 0.
-        """
-        with torch.inference_mode():
-            self.ref_model.load_state_dict(self.model.state_dict())
-        self.ref_model.eval()
 
     def _chat(self, question: str, solution: str):
         msgs = [
@@ -147,9 +128,9 @@ class AceMathRewardModel:
         raise NotImplementedError("Deprecated path; not used after refactor")
 
     # -------------------- Reference scoring --------------------
-    def score_reference(self, questions: List[str], candidates_by_q: List[List[str]], rm_config: Optional[dict] = None, forced_small_batch_size=False) -> Tuple[torch.Tensor, torch.Tensor]:
+    def score_reference(self, questions: List[str], candidates_by_q: List[List[str]], rm_config: Optional[dict] = None, forced_small_batch_size=False) -> torch.Tensor:
         self.model.eval()
-        self.ref_model.eval()
+
         pad_to_mult8 = bool(rm_config.get("pad_to_multiple_of_8"))
         max_tokens = int(rm_config.get("max_tokens_per_batch_infer"))
         max_seqs = int(rm_config.get("max_seqs_per_infer_batch"))
@@ -174,11 +155,11 @@ class AceMathRewardModel:
         prelim = self.tokenizer(texts, padding=False, truncation=True)
         lengths = [len(ids) for ids in prelim["input_ids"]]
         scores_model = torch.empty(len(questions), max_k, dtype=torch.float32).fill_(float("nan"))
-        scores_ref = torch.empty(len(questions), max_k, dtype=torch.float32).fill_(float("nan"))
+
 
         batches = self.pack_by_tokens(lengths, max_tokens, max_seqs)
         if not batches:
-            return scores_model, scores_ref
+            return scores_model
 
         use_double_buffer = torch.cuda.is_available() and len(batches) > 1
         prefetch_stream = torch.cuda.Stream(device=torch.device(self.device)) if use_double_buffer else None
@@ -214,15 +195,14 @@ class AceMathRewardModel:
             if use_double_buffer:
                 torch.cuda.current_stream().wait_stream(prefetch_stream)
             logits_model = self._forward_logits(current_enc, grad_enabled=False, model=self.model)
-            logits_ref = self._forward_logits(current_enc, grad_enabled=False, model=self.ref_model)
+
             r_model = logits_model[:, 1].detach().to(dtype=torch.float32, device="cpu")
-            r_ref = logits_ref[:, 1].detach().to(dtype=torch.float32, device="cpu")
+
             for local_i, global_i in enumerate(idxs):
                 qi, kj = meta[global_i]
                 scores_model[qi, kj] = r_model[local_i]
-                scores_ref[qi, kj] = r_ref[local_i]
-            del logits_model, logits_ref, r_model, r_ref, current_enc
-        return scores_model, scores_ref
+            del logits_model, r_model, current_enc
+        return scores_model
 
     # -------------------- Pair scoring (pos/neg) --------------------
     def score_pairs(self, questions: List[str], solutions_pos: List[str], solutions_neg: List[str], rm_config: Optional[dict] = None) -> Tuple[torch.Tensor, torch.Tensor]:

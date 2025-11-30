@@ -210,8 +210,6 @@ def choose_pos_neg_triplets(
     candidates: List[List[str]],
     correctness: Any,  # can be List[List[int]] or torch.Tensor
     rm_scores: torch.Tensor,
-    rm_scores_ref: torch.Tensor,
-    gamma: float,
 ) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str, str, str]]]:
     """Return triplets (question, pos_solution, neg_solution) selecting hardest pos (lowest score among correct)
     and hardest neg (highest score among incorrect) for each question with mixed correctness.
@@ -240,13 +238,13 @@ def choose_pos_neg_triplets(
         K = len(cand_list)
         # Slice to actual candidate count for this question
         row_trained = rm_scores[qi, :K]
-        row_ref = rm_scores_ref[qi, :K]
+
         llm_pos_j, llm_neg_j = _select_triplet_for_llm(
             correct_ids,
             incorrect_ids,
             s_trained_row=row_trained,
-            s_ref_row=row_ref,
-            alpha=float(gamma),
+
+
             norm_mode="z",
         )
 
@@ -366,12 +364,8 @@ async def training_loop(config: Dict[str, Any]):
     num_steps = config["train"]["num_steps"]
     batch_size = config["train"]["batch_size"]
     n_samples = config["train"]["n_samples_per_problem"]
-    explore_gamma = config["train"]["explore_gamma"]
-    exploit_gamma = config["train"]["exploit_gamma"]
 
 
-    start_explore_at = config["train"]["start_explore_at"]
-    not_improve_steps_limit = config["train"]["not_improve_steps_limit"]
     evaluation_config = config.get("evaluation")
     tmp_weights_path = config.get("tmp_weights_safetensors_path")  # path with potential typo kept as-is
     url = f"http://localhost:30000/flush_cache"
@@ -387,13 +381,8 @@ async def training_loop(config: Dict[str, Any]):
 
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
-    rm_update_step = rm_config.get("update_ref_model")  # new config key
-    not_improved_steps = 0
 
-    gamma = exploit_gamma
-    exploration_mode = False
 
-    print(f'Starting at gamma = {gamma:.2f}')
     for step in range(num_steps):
         if step % rm_save_every_steps == 0 :
             rm_model.save_model(rm_save_path)
@@ -405,9 +394,6 @@ async def training_loop(config: Dict[str, Any]):
             print(f"[Eval@Step {step}] {json.dumps(eval_res, indent=2)}")
             await _async_flush_cache(url)
 
-        if step == rm_update_step:
-            print(f"[RM@Step {step}] Updating reference model.")
-            rm_model.update_ref_model()
 
         records = get_batch_records(train_ds, batch_size, step)
         questions = [r[q_field] for r in records]
@@ -461,57 +447,7 @@ async def training_loop(config: Dict[str, Any]):
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
         candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers)
-        pass1 = [(any(c == 1 for c in cs)) for cs in correctness]
-        accuracy_mean = np.mean([np.mean([c == 1 for c in cs]) for cs in correctness])
-        pass1_mean = np.mean(pass1)
-        if step == 0:
-            last_accuracy = accuracy_mean
-            last_pass1 = pass1_mean
-            last_accuracy_change = 0
-            last_pass1_change = 0
-            not_improved_steps = 0
-        elif step == 1:
-            not_improved_steps += int((accuracy_mean < last_accuracy) and (pass1_mean < last_pass1))
-            last_accuracy_change = min(accuracy_mean - last_accuracy, 0)
-            last_pass1_change = min(pass1_mean - last_pass1, 0)
-        else:
-            accuracy_change = accuracy_mean - last_accuracy
-            pass1_change = pass1_mean - last_pass1
-            if (pass1_change + last_pass1_change) > 0 or (accuracy_change + last_accuracy_change) > 0:
-                not_improved_steps -= 1
-            else:
-                not_improved_steps += 1
-            not_improved_steps = max(not_improved_steps, 0)
-            last_accuracy = accuracy_mean
-            last_pass1 = pass1_mean
-            last_accuracy_change = min(accuracy_change, 0)
-            last_pass1_change = min(pass1_change, 0)
-            print(f'[Step {step}] Accuracy: {accuracy_mean:.4f} (Δ {accuracy_change:.4f}), Pass1: {pass1_mean:.4f} (Δ {pass1_change:.4f}), Not improved steps: {not_improved_steps}')
-
-        if step == start_explore_at:
-            soft_reset_adam(llm_trainer.explore_optimizer)
-            soft_reset_adam(llm_trainer.exploit_optimizer)
-            gamma = explore_gamma
-            print(f"[Step {step}] Starting exploration phase. gamma = {gamma:.2f}")
-            exploration_mode = True
-            not_improved_steps = 0
-
-        if step > start_explore_at and not_improved_steps == not_improve_steps_limit:
-            not_improved_steps = 0
-            if exploration_mode:
-                gamma = exploit_gamma
-                soft_reset_adam(llm_trainer.explore_optimizer)
-                soft_reset_adam(llm_trainer.exploit_optimizer)
-                print(f"[Step {step}] Reached max not improved steps; stopping exploration phase.  gamma = {gamma:.2f}")
-                exploration_mode = False
-                rm_model.update_ref_model()
-                print(f"[RM@Step {step}] Updated reference model.")
-            else:
-                soft_reset_adam(llm_trainer.explore_optimizer)
-                soft_reset_adam(llm_trainer.exploit_optimizer)
-                exploration_mode = True
-                gamma = explore_gamma
-                print(f"[Step {step}] Reached max not improved steps; stopping exploitation phase and starting exploration phase. gamma = {gamma:.2f}")
+        pass1 = [any([c==1 for c in row]) for row in correctness]
 
         # Filter invalid candidates and choose mixed correctness subset
         questions_f, gold_answers_f, candidates_f, correctness_filtered_list = filter_and_select_mixed(
@@ -525,34 +461,30 @@ async def training_loop(config: Dict[str, Any]):
             correctness_tensor[qi, :len(row)] = torch.tensor(row, dtype=torch.int32)
         st = time.time()
         try:
-            rm_scores_model, rm_scores_ref = rm_model.score_reference(questions_f, candidates_f, rm_config)
+            rm_scores = rm_model.score_reference(questions_f, candidates_f, rm_config)
         except Exception as e:
             print(f"[Step {step}] Exception during RM scoring: {e} will retry batch with 0.25 batch size.")
             torch.cuda.empty_cache()
-            rm_scores_model, rm_scores_ref = rm_model.score_reference(questions_f, candidates_f, rm_config, forced_small_batch_size=True)
+            rm_scores = rm_model.score_reference(questions_f, candidates_f, rm_config, forced_small_batch_size=True)
         print(f"[Step {step}] RM Scoring time: {time.time() - st:.2f}s")
         torch.cuda.empty_cache()
-        rm_scores = rm_scores_model
-        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions_f, candidates_f, correctness_tensor, rm_scores, rm_scores_ref, gamma)
+        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions_f, candidates_f, correctness_tensor, rm_scores)
         if not triplets_for_rm:
             continue
-        if step < start_explore_at or step % rm_train_in_explore_every == 0 and not exploration_mode:
-            try:
-                rm_avg_loss = rm_model.train_step(triplets_for_rm)
-            except Exception as e:
-                print(f"[Step {step}] Exception during RM training: {e} will skip")
-                rm_avg_loss = 0.0
-        else:
-            rm_avg_loss = 0.0
+
         try:
-            llm_avg_loss = llm_trainer.train_step(triplets_for_llm,
-                                                  llm_trainer.explore_optimizer if exploration_mode else llm_trainer.exploit_optimizer,
-                                                  llm_trainer.explore_scheduler if exploration_mode else llm_trainer.exploit_scheduler)
+            rm_avg_loss = rm_model.train_step(triplets_for_rm)
+        except Exception as e:
+            print(f"[Step {step}] Exception during RM training: {e} will skip")
+            rm_avg_loss = 0.0
+
+        try:
+            llm_avg_loss = llm_trainer.train_step(triplets_for_llm)
         except Exception as e:
             print(f"[Step {step}] Exception during LLM training: {e} will skip")
             llm_avg_loss = 0.0
         print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
-        log_questions(questions_f, gold_answers_f, candidates_f, rm_scores_model, rm_scores_ref, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1)
+        log_questions(questions_f, gold_answers_f, candidates_f, rm_scores, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1)
         if last_swap_task is not None:
             await last_swap_task
         last_save_task = asyncio.create_task(_async_save_model(llm_trainer, tmp_weights_path))

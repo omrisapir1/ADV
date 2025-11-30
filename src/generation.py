@@ -105,26 +105,45 @@ class AsyncSGLangEngineWrapper:
                 self.metrics["in_flight"] -= 1
 
     # Helper to compute entropy from a token_info with top_logprobs
-    def _entropy_from_top_logprobs(self, token_info: Any) -> Optional[float]:
+    def _entropy_and_explore_from_top_logprobs(self, token_info: Any) -> Tuple[Optional[float], Optional[float]]:
         """
-        Compute entropy H = -Σ p_i log p_i from top_logprobs for a single position.
-        Uses natural log; result is in nats. Returns None if unavailable.
+        Compute:
+          1) entropy H = -Σ p_i log p_i   (in nats)
+          2) exploration score = 1 - P_selected
+
+        where P_selected is the normalized probability of the token
+        the model actually selected among the top_logprobs candidates.
+
+        Returns (entropy, explore_score).
+        If top_logprobs unavailable, returns (None, None).
         """
         top = getattr(token_info, "top_logprobs", None)
         if not top:
-            return None
-        # Convert logprobs to probabilities and normalize
+            return None, None
+
+        # Extract probabilities
         probs = []
         for t in top:
             lp = getattr(t, "logprob", None)
             if lp is None:
-                return None
+                return None, None
             probs.append(math.exp(lp))
+
         Z = sum(probs)
         if Z <= 0:
-            return None
+            return None, None
+
+        # Normalize
         probs = [p / Z for p in probs]
-        return -sum(p * math.log(p) for p in probs if p > 0)
+
+        # --- 1) Entropy ---
+        entropy = -sum(p * math.log(p) for p in probs if p > 0)
+
+        # --- 2) Exploration score = 1 - P_selected ---
+        # Assuming selected token is the FIRST entry in top_logprobs
+        P_selected = probs[0]
+
+        return entropy, P_selected
 
     async def _two_phase_for_one_prompt(
         self,
@@ -138,7 +157,7 @@ class AsyncSGLangEngineWrapper:
         think_repetition_penalty: float,
         answer_max_new_tokens: int,
         answer_stop: List[str],
-    ) -> List[tuple[str, int, float]]:
+    ) -> List[tuple[str, int, float, float]]:
         """Two-phase generation for a single prompt with bounded concurrency & cancellation safety.
         Returns tuples of (full_text, phase_flag, avg_entropy) where phase_flag=1 if answer appended.
         avg_entropy is computed from phase-1 top_logprobs per sample when available, else None.
@@ -163,23 +182,29 @@ class AsyncSGLangEngineWrapper:
             finish_reason = getattr(choice, "finish_reason", None)
             # Compute avg entropy from logprobs if available
             avg_entropy: Optional[float] = None
+            avg_p_selected: Optional[float] = None
             lp_obj = getattr(choice, "logprobs", None)
             content_list = getattr(lp_obj, "content", None) or getattr(lp_obj, "tokens", None)
             if content_list:
                 entropies: List[float] = []
+                ps_selcted: List[float] = []
                 for token_info in content_list:
-                    h = self._entropy_from_top_logprobs(token_info)
+                    h, p_selected = self._entropy_and_explore_from_top_logprobs(token_info)
                     if h is not None:
                         entropies.append(h)
+                    if p_selected is not None:
+                        ps_selcted.append(p_selected)
                 if entropies:
                     avg_entropy = sum(entropies) / len(entropies)
+                if ps_selcted:
+                    avg_p_selected = sum(ps_selcted) / len(ps_selcted)
             # If stopped incorrectly or contains boxed answer in think, finalize think-only
             if finish_reason != "stop" or re.findall(r"\\boxed\s*{(.*?)}", think_piece or "", flags=re.DOTALL):
-                results[idx] = (think_piece, 0, avg_entropy)
+                results[idx] = (think_piece, 0, avg_entropy, avg_p_selected)
                 continue
             think_clean = think_piece.split(THINK_STOP, 1)[0] if THINK_STOP in think_piece else think_piece
             context = base_prompt + think_clean + THINK_STOP
-            phase2_items.append((idx, think_clean, context, avg_entropy))
+            phase2_items.append((idx, think_clean, context, avg_entropy, avg_p_selected))
         if not phase2_items:
             return results
 
@@ -204,15 +229,15 @@ class AsyncSGLangEngineWrapper:
                 tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx, _ in batch]
                 self.metrics["phase2_batches"] += 1
                 gathered = await asyncio.gather(*tasks, return_exceptions=True)
-                for (idx, think_clean, _ctx, avg_entropy), resp2 in zip(batch, gathered):
+                for (idx, think_clean, _ctx, avg_entropy, avg_p_selected), resp2 in zip(batch, gathered):
                     if isinstance(resp2, Exception) or not getattr(resp2, "choices", None):
                         # fallback to think only
                         full_text = think_clean + THINK_STOP
-                        results[idx] = (full_text, 0, avg_entropy)
+                        results[idx] = (full_text, 0, avg_entropy, avg_p_selected)
                         continue
                     answer_text = (resp2.choices[0].text or "") if resp2.choices else ""
                     full_text = think_clean + THINK_STOP + answer_text
-                    results[idx] = (full_text, 1, avg_entropy)
+                    results[idx] = (full_text, 1, avg_entropy, avg_p_selected)
                 await asyncio.sleep(random.uniform(0.005, 0.02))  # jitter between batches
         except asyncio.CancelledError:
             # Cancel outstanding tasks if any - tasks already awaited inside loop; just propagate
@@ -227,7 +252,7 @@ class AsyncSGLangEngineWrapper:
         prompts: List[str],
         n_samples: int,
         **gen_cfg: Any,
-    ) -> List[List[tuple[str, int, float]]]:
+    ) -> List[List[tuple[str, int, float, float]]]:
         """Generate candidates for each prompt using two-phase method with config values.
         Implements circuit breaker on repeated empty generations. Returns (text, phase_flag, avg_entropy).
         """
@@ -271,7 +296,7 @@ class AsyncSGLangEngineWrapper:
                 t.cancel()
             raise
 
-        normalized: List[List[tuple[str, int, float]]] = []
+        normalized: List[List[tuple[str, int, float, float]]] = []
         empty_all = True
         for r in results:
             if isinstance(r, Exception):

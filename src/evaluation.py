@@ -146,7 +146,6 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
     all_correctness: List[List[int]] = []
     all_pass1: List[int] = []
     rm_scores_rows: List[torch.Tensor] = []
-    rm_scores_ref_rows: List[torch.Tensor] = []
 
     for start in range(0, total, batch_size):
         end = min(start + batch_size, total)
@@ -165,11 +164,11 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         )
         # Reward scoring on filtered batch
         try:
-            batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions_f, batch_candidate_texts_f, rm_config)
+            batch_rm_scores_model = rm_model.score_reference(batch_questions_f, batch_candidate_texts_f, rm_config)
         except Exception as e:
             print(f"[Eval Sampling] RM scoring exception on filtered batch {start}:{end}: {e}; retry small batch.")
             torch.cuda.empty_cache()
-            batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions_f, batch_candidate_texts_f, rm_config, forced_small_batch_size=True)
+            batch_rm_scores_model = rm_model.score_reference(batch_questions_f, batch_candidate_texts_f, rm_config, forced_small_batch_size=True)
         torch.cuda.empty_cache()
 
         # Accumulate
@@ -179,8 +178,8 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         all_correctness.extend(batch_correctness_f)
         all_pass1.extend(batch_pass1)
         rm_scores_rows.extend([row.detach().cpu() for row in batch_rm_scores_model])
-        rm_scores_ref_rows.extend([row.detach().cpu() for row in batch_rm_scores_ref])
-        del raw_candidates, batch_candidate_texts, batch_valid_flags, batch_rm_scores_model, batch_rm_scores_ref
+
+        del raw_candidates, batch_candidate_texts, batch_valid_flags, batch_rm_scores_model
 
     if not all_questions:
         # Return empty-style result if no mixed questions found at all
@@ -190,7 +189,6 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
             'n_samples_per_question': n_samples,
             'avg_accuracy': 0.0,
             'avg_auc': 0.0,
-            'avg_auc_ref': 0.0,
             'percent_minus_one': 0.0,
             'note': 'No mixed correctness questions after filtering.'
         }
@@ -198,15 +196,12 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
     # Build padded tensors for AUC computations
     max_k = max(len(row) for row in all_candidate_texts)
     rm_scores = torch.empty(len(all_questions), max_k, dtype=torch.float32).fill_(float('nan'))
-    rm_scores_ref = torch.empty(len(all_questions), max_k, dtype=torch.float32).fill_(float('nan'))
-    for i, (scores_row, scores_ref_row) in enumerate(zip(rm_scores_rows, rm_scores_ref_rows)):
+    for i, scores_row in enumerate(rm_scores_rows):
         k = min(max_k, scores_row.shape[0])
         rm_scores[i, :k] = scores_row[:k]
-        rm_scores_ref[i, :k] = scores_ref_row[:k]
 
     avg_acc = _per_question_accuracy(all_correctness)
     avg_auc = _average_auc(rm_scores, all_correctness)
-    avg_auc_ref = _average_auc(rm_scores_ref, all_correctness)
     amb_pct = _percent_ambiguous(all_correctness)
 
     # Build and persist a DataFrame with per-question details
@@ -218,11 +213,10 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
             'candidates': all_candidate_texts[i],
             'correct_inccorect': bool_correctness,  # keeping original column name spelling
             'rm_scores': [float(x) if x == x else None for x in rm_scores[i].tolist()],
-            'rm_rf_scores': [float(x) if x == x else None for x in rm_scores_ref[i].tolist()],
         })
 
     df = pd.DataFrame(details_rows, columns=[
-        'question', 'candidates', 'correct_inccorect', 'rm_scores', 'rm_rf_scores',
+        'question', 'candidates', 'correct_inccorect', 'rm_scores',
     ])
     os.makedirs('evaluation_logs', exist_ok=True)
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -239,7 +233,6 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         'n_samples_per_question': n_samples,
         'avg_accuracy': avg_acc,
         'avg_auc': avg_auc,
-        'avg_auc_ref': avg_auc_ref,
         'percent_minus_one': amb_pct,
         'pass1_only': sum(all_pass1) / len(all_pass1),
     }

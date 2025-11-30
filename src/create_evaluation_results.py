@@ -43,7 +43,7 @@ def load_config(path: str) -> EvalSettings:
     a_field = dcfg.get("field_answer", "final_answer")
     split = 'test'
     n_samples = 124
-    batch_size = 8
+    batch_size = 32
     generation_cfg = cfg.get("generation")
     print(generation_cfg)
     return EvalSettings(
@@ -66,7 +66,7 @@ def load_testset(dataset_name: str, split: str):
             if alt in ds:
                 split = alt
                 break
-    return ds[split]
+    return ds[split][:32]
 
 
 def select_records(ds, q_field: str, a_field: str,):
@@ -90,6 +90,7 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
         # Entropy not provided by engine; keep placeholder empty lists for compatibility
         candidate_entropy = [[c[2] for c in row] for row in raw_candidates]
+        candidate_p_selected = [[c[3] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers[start:end])
         for i, q in enumerate(batch_q):
             row_candidates = candidate_texts[i]
@@ -99,6 +100,7 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
                 "gold_answer": gold_answers[start + i],
                 "candidates": row_candidates,
                 "entropies": candidate_entropy[i],
+                "p_selected": candidate_p_selected[i],
                 "correctness": row_correct,
             })
     return out_rows
@@ -122,7 +124,7 @@ async def run():
     st = time.time()
     rows = await generate_all(engine, tokenizer, questions, gold_answers, settings.n_samples, settings.generation_cfg, settings.batch_size)
     print(f"Generation time: {time.time() - st:.2f}s")
-    df = pd.DataFrame(rows, columns=["question", "gold_answer", "candidates", "entropies", "correctness"])
+    df = pd.DataFrame(rows, columns=["question", "gold_answer", "candidates", "entropies", "p_selected","correctness"])
     df.to_pickle("evaluation_results.pkl")
 
 

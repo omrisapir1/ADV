@@ -132,15 +132,15 @@ def evaluate_sampling_sync(engine, rm_model, test_ds, q_field: str, a_field: str
         all_candidate_texts.extend(batch_candidate_texts)
         if torch is not None:
             try:
-                batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config)
+                batch_rm_scores_model = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config)
             except Exception as e:
                 print(f"[Eval Sampling Sync] RM scoring exception on batch {start}:{end}: {e}; retry small batch.")
                 torch.cuda.empty_cache()
-                batch_rm_scores_model, batch_rm_scores_ref = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config, forced_small_batch_size=True)
+                batch_rm_scores_model = rm_model.score_reference(batch_questions, batch_candidate_texts, rm_config, forced_small_batch_size=True)
             torch.cuda.empty_cache()
             b_rows, b_cols = batch_rm_scores_model.shape
             rm_scores[start:start + b_rows, :b_cols] = batch_rm_scores_model.detach().to(dtype=torch.float32, device='cpu')
-            del batch_rm_scores_model, batch_rm_scores_ref, raw_candidates, batch_candidate_texts
+            del batch_rm_scores_model, raw_candidates, batch_candidate_texts
 
     correctness = compute_final_correctness(all_candidate_texts, all_gold_answers)
     avg_acc = _per_question_accuracy(correctness)
