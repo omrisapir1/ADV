@@ -66,7 +66,7 @@ def load_testset(dataset_name: str, split: str):
             if alt in ds:
                 split = alt
                 break
-    return ds[split][
+    return ds[split]
 
 
 def select_records(ds, q_field: str, a_field: str,):
