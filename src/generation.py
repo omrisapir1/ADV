@@ -218,7 +218,7 @@ class AsyncSGLangEngineWrapper:
 
             for start_idx in range(0, len(phase2_items), self.phase2_batch_limit):
                 batch = phase2_items[start_idx:start_idx + self.phase2_batch_limit]
-                tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx, _ in batch]
+                tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx, _, _ in batch]
                 self.metrics["phase2_batches"] += 1
                 gathered = await asyncio.gather(*tasks, return_exceptions=True)
                 for (idx, think_clean, _ctx, avg_entropy, avg_p_selected), resp2 in zip(batch, gathered):
