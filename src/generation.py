@@ -185,6 +185,7 @@ class AsyncSGLangEngineWrapper:
             avg_p_selected: Optional[float] = None
             lp_obj = getattr(choice, "logprobs", None)
             content_list = getattr(lp_obj, "content", None) or getattr(lp_obj, "tokens", None)
+            print(content_list)
             if content_list:
                 entropies: List[float] = []
                 ps_selcted: List[float] = []
