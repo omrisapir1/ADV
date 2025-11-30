@@ -235,7 +235,8 @@ class AsyncSGLangEngineWrapper:
         except asyncio.CancelledError:
             # Cancel outstanding tasks if any - tasks already awaited inside loop; just propagate
             raise
-        except Exception:
+        except Exception as e:
+            print(e)
             raise
             # In case of unexpected exception, keep existing partial results (think only)
             pass
