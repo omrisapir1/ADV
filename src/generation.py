@@ -154,8 +154,7 @@ class AsyncSGLangEngineWrapper:
             max_tokens=think_max_new_tokens,
             stop=[THINK_STOP],
             extra_body=payload_extra_1,
-            logprobs=True,
-            top_logprobs=20,
+            logprobs=20,
         )
         results: List[tuple[str, int, float]] = [("", 0, None)] * (len(resp1.choices) if getattr(resp1, "choices", None) else n_samples)
         phase2_items: List[Tuple[int, str, str, Optional[float]]] = []
