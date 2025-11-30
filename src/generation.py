@@ -215,6 +215,7 @@ class AsyncSGLangEngineWrapper:
 
         # Phase 2 batched
         try:
+            print(len(phase2_items), self.phase2_batch_limit)
             for start_idx in range(0, len(phase2_items), self.phase2_batch_limit):
                 batch = phase2_items[start_idx:start_idx + self.phase2_batch_limit]
                 tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx, _ in batch]
