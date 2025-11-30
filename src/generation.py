@@ -221,7 +221,7 @@ class AsyncSGLangEngineWrapper:
                 self.metrics["phase2_batches"] += 1
                 gathered = await asyncio.gather(*tasks, return_exceptions=True)
                 for (idx, think_clean, _ctx, avg_entropy, avg_p_selected), resp2 in zip(batch, gathered):
-                    print(avg_entropy)
+
                     if isinstance(resp2, Exception) or not getattr(resp2, "choices", None):
                         # fallback to think only
                         full_text = think_clean + THINK_STOP
@@ -235,6 +235,7 @@ class AsyncSGLangEngineWrapper:
             # Cancel outstanding tasks if any - tasks already awaited inside loop; just propagate
             raise
         except Exception:
+            raise
             # In case of unexpected exception, keep existing partial results (think only)
             pass
         return results
