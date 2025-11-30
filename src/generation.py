@@ -185,12 +185,8 @@ class AsyncSGLangEngineWrapper:
                     ps_selcted.append(p_selected)
             if entropies:
                 avg_entropy = sum(entropies) / len(entropies)
-            else:
-                raise
             if ps_selcted:
                 avg_p_selected = sum(ps_selcted) / len(ps_selcted)
-            else:
-                raise 
             # If stopped incorrectly or contains boxed answer in think, finalize think-only
             if finish_reason != "stop" or re.findall(r"\\boxed\s*{(.*?)}", think_piece or "", flags=re.DOTALL):
                 results[idx] = (think_piece, 0, avg_entropy, avg_p_selected)
@@ -198,6 +194,10 @@ class AsyncSGLangEngineWrapper:
             think_clean = think_piece.split(THINK_STOP, 1)[0] if THINK_STOP in think_piece else think_piece
             context = base_prompt + think_clean + THINK_STOP
             phase2_items.append((idx, think_clean, context, avg_entropy, avg_p_selected))
+        print(phase2_items)
+        print('-------------------------')
+        print(results)
+        raise
         if not phase2_items:
             return results
 
