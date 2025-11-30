@@ -213,9 +213,9 @@ class AsyncSGLangEngineWrapper:
                 extra_body=payload_extra_2,
             )
 
-        # Phase 2 batched
+        import traceback
         try:
-            print(len(phase2_items), self.phase2_batch_limit)
+
             for start_idx in range(0, len(phase2_items), self.phase2_batch_limit):
                 batch = phase2_items[start_idx:start_idx + self.phase2_batch_limit]
                 tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx, _ in batch]
@@ -236,7 +236,8 @@ class AsyncSGLangEngineWrapper:
             # Cancel outstanding tasks if any - tasks already awaited inside loop; just propagate
             raise
         except Exception as e:
-            print(e)
+            print("ERROR:", e)
+            traceback.print_exc()
             raise
             # In case of unexpected exception, keep existing partial results (think only)
             pass
@@ -280,9 +281,7 @@ class AsyncSGLangEngineWrapper:
                     return []
                 except asyncio.CancelledError:
                     raise
-                except Exception as e:
-                    print(e)
-                    raise 
+                except Exception:
                     return []
             tasks.append(asyncio.create_task(run_with_timeout()))
 
