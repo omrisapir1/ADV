@@ -129,17 +129,7 @@ class AsyncSGLangEngineWrapper:
         # Entropy (nats)
         entropy = -sum(p * math.log(p) for p in probs if p > 0)
         # Exploration score
-        if token_lp is None or not isinstance(token_lp, (int, float)):
-            explore = None
-        else:
-
-            p_selected = math.exp(token_lp) / Z
-            # Clamp to [0,1] for numerical stability
-            if p_selected < 0:
-                p_selected = 0.0
-            elif p_selected > 1:
-                p_selected = 1.0
-            explore = 1.0 - p_selected
+        p_selected = math.exp(token_lp) / Z
 
         return entropy, p_selected
 
@@ -195,8 +185,12 @@ class AsyncSGLangEngineWrapper:
                     ps_selcted.append(p_selected)
             if entropies:
                 avg_entropy = sum(entropies) / len(entropies)
+            else:
+                raise
             if ps_selcted:
                 avg_p_selected = sum(ps_selcted) / len(ps_selcted)
+            else:
+                raise 
             # If stopped incorrectly or contains boxed answer in think, finalize think-only
             if finish_reason != "stop" or re.findall(r"\\boxed\s*{(.*?)}", think_piece or "", flags=re.DOTALL):
                 results[idx] = (think_piece, 0, avg_entropy, avg_p_selected)
