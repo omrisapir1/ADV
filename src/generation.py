@@ -175,7 +175,7 @@ class AsyncSGLangEngineWrapper:
             extra_body=payload_extra_1,
             logprobs=20,
         )
-        results: List[tuple[str, int, float, float]] = [("", 0, None, None)] * (len(resp1.choices)
+        results: List[tuple[str, int, float, float]] = [("", 0, None, None)] * (len(resp1.choices))
         phase2_items: List[Tuple[int, str, str, Optional[float]]] = []
         for idx, choice in enumerate(getattr(resp1, "choices", [])):
             think_piece = (getattr(choice, "text", "") or "")
