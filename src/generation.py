@@ -117,6 +117,7 @@ class AsyncSGLangEngineWrapper:
         Returns (entropy, explore_score).
         If top_logprobs unavailable, returns (None, None).
         """
+        print(token_info)
         top = getattr(token_info, "top_logprobs", None)
         if not top:
             return None, None
@@ -185,11 +186,10 @@ class AsyncSGLangEngineWrapper:
             avg_p_selected: Optional[float] = None
             lp_obj = getattr(choice, "logprobs", None)
             content_list = getattr(lp_obj, "content", None) or getattr(lp_obj, "tokens", None)
-            print(content_list)
-            if content_list:
+            if lp_obj:
                 entropies: List[float] = []
                 ps_selcted: List[float] = []
-                for token_info in content_list:
+                for token_info in lp_obj:
                     h, p_selected = self._entropy_and_explore_from_top_logprobs(token_info)
                     if h is not None:
                         entropies.append(h)
