@@ -103,7 +103,7 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
                 "p_selected": candidate_p_selected[i],
                 "correctness": row_correct,
             })
-        return out_rows
+
     return out_rows
 
 
