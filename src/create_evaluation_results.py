@@ -93,6 +93,7 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
         candidate_p_selected = [[c[3] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers[start:end])
         for i, q in enumerate(batch_q):
+            print(i)
             row_candidates = candidate_texts[i]
             row_correct = correctness[i]
             out_rows.append({
