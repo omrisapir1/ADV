@@ -280,7 +280,9 @@ class AsyncSGLangEngineWrapper:
                     return []
                 except asyncio.CancelledError:
                     raise
-                except Exception:
+                except Exception as e:
+                    print(e)
+                    raise 
                     return []
             tasks.append(asyncio.create_task(run_with_timeout()))
 
