@@ -66,7 +66,7 @@ def load_testset(dataset_name: str, split: str):
             if alt in ds:
                 split = alt
                 break
-    return ds[split][:32]
+    return ds[split][
 
 
 def select_records(ds, q_field: str, a_field: str,):
@@ -92,7 +92,7 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
         candidate_entropy = [[c[2] for c in row] for row in raw_candidates]
         candidate_p_selected = [[c[3] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers[start:end])
-        for i, q in enumerate(batch_q):
+        for i, q in enumerate(batch_q[:1]):
             row_candidates = candidate_texts[i]
             row_correct = correctness[i]
             out_rows.append({
