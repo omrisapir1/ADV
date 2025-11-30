@@ -104,49 +104,44 @@ class AsyncSGLangEngineWrapper:
                 self.metrics["total_time"] += (time.monotonic() - start)
                 self.metrics["in_flight"] -= 1
 
-    # Helper to compute entropy from a token_info with top_logprobs
-    def _entropy_and_explore_from_top_logprobs(self, token_info: Any) -> Tuple[Optional[float], Optional[float]]:
+    # Helper to compute entropy/exploration from top_logprobs dict and selected token logprob
+    def _entropy_and_explore_from_top_logprobs(self, top_lp: Dict[Any, float], token_lp: Optional[float]) -> Tuple[Optional[float], Optional[float]]:
         """
-        Compute:
-          1) entropy H = -Σ p_i log p_i   (in nats)
-          2) exploration score = 1 - P_selected
-
-        where P_selected is the normalized probability of the token
-        the model actually selected among the top_logprobs candidates.
-
-        Returns (entropy, explore_score).
-        If top_logprobs unavailable, returns (None, None).
+        Inputs:
+          - top_lp: dict mapping token->logprob for the top candidates at a position.
+          - token_lp: logprob of the actually selected token at this position.
+        Returns (entropy_nats, exploration_score) where:
+          entropy_nats = -Σ p_i log p_i with p_i from normalized exp(logprob)
+          exploration_score = 1 - P_selected, with P_selected from normalized probability of selected token
+        If inputs are missing/invalid, returns (None, None).
         """
-        if token_info[0] != 'text_offset':
-            print(token_info)
-            exit(0)
-        top = getattr(token_info, "top_logprobs", None)
-        if not top:
+        if not top_lp or not isinstance(top_lp, dict):
             return None, None
-
-        # Extract probabilities
-        probs = []
-        for t in top:
-            lp = getattr(t, "logprob", None)
-            if lp is None:
-                return None, None
-            probs.append(math.exp(lp))
-
+        # Convert logprobs to probabilities
+        try:
+            probs = [math.exp(lp) for lp in top_lp.values()]
+        except Exception:
+            return None, None
         Z = sum(probs)
-        if Z <= 0:
+        if Z <= 0 or not math.isfinite(Z):
             return None, None
-
-        # Normalize
         probs = [p / Z for p in probs]
-
-        # --- 1) Entropy ---
+        # Entropy (nats)
         entropy = -sum(p * math.log(p) for p in probs if p > 0)
+        # Exploration score
+        if token_lp is None or not isinstance(token_lp, (int, float)):
+            explore = None
+        else:
 
-        # --- 2) Exploration score = 1 - P_selected ---
-        # Assuming selected token is the FIRST entry in top_logprobs
-        P_selected = probs[0]
+            p_selected = math.exp(token_lp) / Z
+            # Clamp to [0,1] for numerical stability
+            if p_selected < 0:
+                p_selected = 0.0
+            elif p_selected > 1:
+                p_selected = 1.0
+            explore = 1.0 - p_selected
 
-        return entropy, P_selected
+        return entropy, p_selected
 
     async def _two_phase_for_one_prompt(
         self,
@@ -187,20 +182,21 @@ class AsyncSGLangEngineWrapper:
             avg_entropy: Optional[float] = None
             avg_p_selected: Optional[float] = None
             lp_obj = getattr(choice, "logprobs", None)
-            content_list = getattr(lp_obj, "content", None) or getattr(lp_obj, "tokens", None)
-            if lp_obj:
-                entropies: List[float] = []
-                ps_selcted: List[float] = []
-                for token_info in lp_obj:
-                    h, p_selected = self._entropy_and_explore_from_top_logprobs(token_info)
-                    if h is not None:
-                        entropies.append(h)
-                    if p_selected is not None:
-                        ps_selcted.append(p_selected)
-                if entropies:
-                    avg_entropy = sum(entropies) / len(entropies)
-                if ps_selcted:
-                    avg_p_selected = sum(ps_selcted) / len(ps_selcted)
+            top_lps = getattr(lp_obj, "top_logprobs", None)
+            token_lps = getattr(lp_obj, "token_logprobs", None)
+
+            entropies: List[float] = []
+            ps_selcted: List[float] = []
+            for top_lp, token_lp in zip(top_lps, token_lps):
+                h, p_selected = self._entropy_and_explore_from_top_logprobs(top_lp, token_lp)
+                if h is not None:
+                    entropies.append(h)
+                if p_selected is not None:
+                    ps_selcted.append(p_selected)
+            if entropies:
+                avg_entropy = sum(entropies) / len(entropies)
+            if ps_selcted:
+                avg_p_selected = sum(ps_selcted) / len(ps_selcted)
             # If stopped incorrectly or contains boxed answer in think, finalize think-only
             if finish_reason != "stop" or re.findall(r"\\boxed\s*{(.*?)}", think_piece or "", flags=re.DOTALL):
                 results[idx] = (think_piece, 0, avg_entropy, avg_p_selected)
