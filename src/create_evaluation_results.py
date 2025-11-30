@@ -104,7 +104,7 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
                 "correctness": row_correct,
             })
             import json
-            json.dump(open(f"/workspace/ADV/res_{i}",'w'), out_rows[-1])
+            json.dump( out_rows[-1], open(f"/workspace/ADV/res_{i}",'w'),)
 
     return out_rows
 
