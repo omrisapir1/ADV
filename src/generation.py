@@ -117,7 +117,9 @@ class AsyncSGLangEngineWrapper:
         Returns (entropy, explore_score).
         If top_logprobs unavailable, returns (None, None).
         """
+
         print(token_info)
+        exit(0)
         top = getattr(token_info, "top_logprobs", None)
         if not top:
             return None, None
