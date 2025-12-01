@@ -259,7 +259,7 @@ class AsyncSGLangEngineWrapper:
         think_max_new_tokens = gen_cfg.get("think_max_new_tokens")
         answer_max_new_tokens = gen_cfg.get("answer_max_new_tokens")
         answer_stop = gen_cfg.get("answer_stop")
-        TIMEOUT_SEC = gen_cfg.get("timeout", 280)  # overall internal timeout per prompt (soft used below)
+        TIMEOUT_SEC = gen_cfg.get("timeout", 500)  # overall internal timeout per prompt (soft used below)
 
         tasks = []
         for p in prompts:
@@ -278,6 +278,7 @@ class AsyncSGLangEngineWrapper:
                 try:
                     return await asyncio.wait_for(coro, timeout=TIMEOUT_SEC)
                 except asyncio.TimeoutError:
+                    raise
                     return []
                 except asyncio.CancelledError:
                     raise
