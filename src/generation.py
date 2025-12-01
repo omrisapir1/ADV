@@ -39,8 +39,6 @@ class AsyncSGLangEngineWrapper:
             self.phase2_batch_limit = max_conc
         self.circuit_breaker_failures = int(sglang_config.get("circuit_breaker_failures", 5))
         self._consecutive_failures = 0
-        # New: allow forcing chat endpoint usage if prompts are chat-formatted
-        self.force_chat = bool(sglang_config.get("force_chat", True))
 
         self.metrics: Dict[str, Any] = {
             "total_requests": 0,
@@ -52,7 +50,6 @@ class AsyncSGLangEngineWrapper:
             "circuit_breaker_trips": 0,
             "fallback_http_used": 0,
             "empty_choices": 0,
-            "chat_mode_calls": 0,
         }
 
     def get_metrics(self) -> Dict[str, Any]:
@@ -87,14 +84,13 @@ class AsyncSGLangEngineWrapper:
             return False
 
     async def _http_fallback_completion(self, payload: Dict[str, Any]) -> Any:
-        """Fallback: direct HTTP POST to /completions and /chat/completions if SDK returned empty choices."""
+        """Fallback: direct HTTP POST to /completions only (removed chat fallback)."""
         def _do_post(url: str, data: Dict[str, Any]):
             try:
                 r = requests.post(url, json=data, timeout=self.per_request_timeout)
                 return r.status_code, r.text
             except Exception as e:
                 return 599, str(e)
-        # Try /completions then /chat/completions (convert prompt->messages)
         comp_url = f"{self.base_url}/completions"
         status_c, text_c = await asyncio.to_thread(_do_post, comp_url, payload)
         parsed_c = None
@@ -105,30 +101,8 @@ class AsyncSGLangEngineWrapper:
         if status_c == 200 and isinstance(parsed_c, dict) and parsed_c.get('choices'):
             self.metrics['fallback_http_used'] += 1
             return parsed_c
-        chat_payload = {
-            "model": payload.get("model", self.model_name),
-            "messages": [
-                {"role": "user", "content": payload.get("prompt", "")}
-            ],
-            "temperature": payload.get("temperature", 0),
-            "top_p": payload.get("top_p", 1),
-            "max_tokens": payload.get("max_tokens", 1),
-            "n": payload.get("n", 1),
-            "stop": payload.get("stop"),
-        }
-        chat_url = f"{self.base_url}/chat/completions"
-        status_chat, text_chat = await asyncio.to_thread(_do_post, chat_url, chat_payload)
-        parsed_chat = None
-        try:
-            parsed_chat = json.loads(text_chat)
-        except Exception:
-            pass
-        if status_chat == 200 and isinstance(parsed_chat, dict) and parsed_chat.get('choices'):
-            self.metrics['fallback_http_used'] += 1
-            return parsed_chat
-        print("[generation][FALLBACK] Both HTTP attempts failed.")
-        print(f"[generation][FALLBACK] /completions status={status_c} body_head={text_c[:200]}")
-        print(f"[generation][FALLBACK] /chat/completions status={status_chat} body_head={text_chat[:200]}")
+        print("[generation][FALLBACK] HTTP /completions fallback failed.")
+        print(f"[generation][FALLBACK] status={status_c} body_head={text_c[:200]}")
         class Dummy: choices = []
         return Dummy()
 
@@ -136,35 +110,18 @@ class AsyncSGLangEngineWrapper:
         async with self._semaphore:
             self.metrics["in_flight"] += 1
             start = time.monotonic()
-
-            # Detect chat-style prompt heuristically if force_chat not explicitly disabled
-            prompt_txt = kwargs.get("prompt", "") or ""
-            looks_chat = ("<|im_start|>" in prompt_txt) or prompt_txt.count("</think>") == 0 and ("system" in prompt_txt[:200])
-            use_chat = self.force_chat and looks_chat
-
+            task = asyncio.create_task(self.client.completions.create(**kwargs))
             try:
-                if use_chat:
-                    # Convert single prompt into messages for chat endpoint
-                    self.metrics["chat_mode_calls"] += 1
-                    messages = [
-                        {"role": "user", "content": prompt_txt}
-                    ]
-                    chat_kwargs = {k: v for k, v in kwargs.items() if k != "prompt"}
-                    chat_kwargs["model"] = kwargs.get("model", self.model_name)
-                    chat_kwargs["messages"] = messages
-                    task = asyncio.create_task(self.client.chat.completions.create(**chat_kwargs))
-                else:
-                    task = asyncio.create_task(self.client.completions.create(**kwargs))
                 resp = await asyncio.wait_for(task, timeout=self.per_request_timeout)
                 self.metrics["total_requests"] += 1
                 if not getattr(resp, 'choices', None):
                     self.metrics['empty_choices'] += 1
-                    print(f"[generation][WARN] Empty choices from SDK (chat={use_chat}); attempting HTTP fallback.")
-                    # Show truncated prompt for diagnostics
-                    print(f"[generation][WARN] Prompt_head: {prompt_txt[:160]!r}")
+                    print("[generation][WARN] Empty choices from SDK; attempting HTTP fallback.")
+                    prompt_txt = (kwargs.get("prompt") or "")[:160]
+                    print(f"[generation][WARN] Prompt_head: {prompt_txt!r}")
                     fallback_payload = {
                         "model": kwargs.get("model", self.model_name),
-                        "prompt": prompt_txt,
+                        "prompt": kwargs.get("prompt"),
                         "max_tokens": kwargs.get("max_tokens"),
                         "temperature": kwargs.get("temperature"),
                         "top_p": kwargs.get("top_p"),
@@ -173,7 +130,7 @@ class AsyncSGLangEngineWrapper:
                     }
                     fb = await self._http_fallback_completion(fallback_payload)
                     if isinstance(fb, dict) and fb.get('choices'):
-                        class _Resp:  # mimic openai object with .choices list
+                        class _Resp:
                             def __init__(self, raw):
                                 self.choices = raw['choices']
                         print("[generation][INFO] HTTP fallback succeeded; using fallback response.")
@@ -209,33 +166,13 @@ class AsyncSGLangEngineWrapper:
         return entropy, p_selected
 
     def _extract_choice_text(self, choice: Any) -> str:
-        """Return textual content from either completion or chat completion choice.
-        Supports OpenAI-style choices with .text or .message.content, and raw dicts.
-        """
         if choice is None:
             return ""
-        # Attribute access variants
         txt = getattr(choice, "text", None)
         if isinstance(txt, str) and txt:
             return txt
-        # Chat style
-        msg = getattr(choice, "message", None)
-        if msg is not None:
-            content = getattr(msg, "content", None)
-            if isinstance(content, str) and content:
-                return content
-            # If message is dict
-            if isinstance(msg, dict):
-                c = msg.get("content")
-                if isinstance(c, str):
-                    return c
-        # Dict fallback
-        if isinstance(choice, dict):
-            if isinstance(choice.get("text"), str):
-                return choice["text"]
-            message = choice.get("message")
-            if isinstance(message, dict) and isinstance(message.get("content"), str):
-                return message["content"]
+        if isinstance(choice, dict) and isinstance(choice.get("text"), str):
+            return choice["text"]
         return ""
 
     async def _two_phase_for_one_prompt(
