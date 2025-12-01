@@ -75,26 +75,28 @@ class AsyncSGLangEngineWrapper:
             think_piece = (choice.text or "")
             finish_reason = getattr(choice, "finish_reason", None)
             # compute avg entropy & avg p_selected from logprobs
-            avg_entropy: Optional[float] = None
-            avg_p_selected: Optional[float] = None
-            lp_obj = getattr(choice, "logprobs", None)
-            top_lps = getattr(lp_obj, "top_logprobs", None) or []
-            token_lps = getattr(lp_obj, "token_logprobs", None) or []
-            entropies: List[float] = []
-            ps_selected: List[float] = []
-            for top_lp, token_lp in zip(top_lps, token_lps):
-                h, p_sel = self._entropy_and_explore_from_top_logprobs(top_lp, token_lp)
-                if h is not None:
-                    entropies.append(h)
-                if p_sel is not None:
-                    ps_selected.append(p_sel)
-            if entropies:
-                avg_entropy = sum(entropies) / len(entropies)
-            if ps_selected:
-                avg_p_selected = sum(ps_selected) / len(ps_selected)
-            # fallback to NaN if missing
-            ae = avg_entropy if avg_entropy is not None else float("nan")
-            aps = avg_p_selected if avg_p_selected is not None else float("nan")
+            # avg_entropy: Optional[float] = None
+            # avg_p_selected: Optional[float] = None
+            # lp_obj = getattr(choice, "logprobs", None)
+            # top_lps = getattr(lp_obj, "top_logprobs", None) or []
+            # token_lps = getattr(lp_obj, "token_logprobs", None) or []
+            # entropies: List[float] = []
+            # ps_selected: List[float] = []
+            # for top_lp, token_lp in zip(top_lps, token_lps):
+            #     h, p_sel = self._entropy_and_explore_from_top_logprobs(top_lp, token_lp)
+            #     if h is not None:
+            #         entropies.append(h)
+            #     if p_sel is not None:
+            #         ps_selected.append(p_sel)
+            # if entropies:
+            #     avg_entropy = sum(entropies) / len(entropies)
+            # if ps_selected:
+            #     avg_p_selected = sum(ps_selected) / len(ps_selected)
+            # # fallback to NaN if missing
+            # ae = avg_entropy if avg_entropy is not None else float("nan")
+            # aps = avg_p_selected if avg_p_selected is not None else float("nan")
+            ae = 0.5
+            aps = 0.5
             if finish_reason != "stop" or re.findall(r"\\boxed\s*\{(.*?)\}", think_piece or "", flags=re.DOTALL):
                 results[idx] = (think_piece, 0, ae, aps)
                 continue

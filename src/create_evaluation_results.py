@@ -43,7 +43,7 @@ def load_config(path: str) -> EvalSettings:
     a_field = dcfg.get("field_answer", "final_answer")
     split = 'test'
     n_samples = 124
-    batch_size = 8
+    batch_size = 2
     generation_cfg = cfg.get("generation")
     print(generation_cfg)
     return EvalSettings(
@@ -102,6 +102,7 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
                 "candidates": row_candidates,
                 "correctness": row_correct,
             })
+        return out_rows
 
     return out_rows
 
