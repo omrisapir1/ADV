@@ -86,7 +86,6 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
         prompts = build_prompts(batch_q, tokenizer)
 
         print("[eval] prompts:", prompts)
-        exit()
         print(f"[eval] Generating batch start={start} size={len(batch_q)}")
         raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_cfg)
         print(f"[eval] Raw candidates lens: {[len(r) for r in raw_candidates]}")
@@ -113,6 +112,7 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
                 "p_selected": candidate_p_selected[i],
                 "correctness": correctness[i],
             })
+            return out_rows
         import json
         try:
             dump_path = os.path.join(os.getcwd(), f"res_{start}.json")
