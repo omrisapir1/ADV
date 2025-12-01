@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import re
 import time
 import math
+import json
 
 import requests
 from openai import AsyncOpenAI
@@ -25,8 +26,7 @@ class AsyncSGLangEngineWrapper:
         api_key  = "EMPTY"
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         self.model_name = model_name
-        # Store the base_url from init for health checks and any direct calls
-        self.base_url = base_url
+        self.base_url = base_url  # for health checks / manual fallbacks
 
         max_conc = sglang_config.get("max_concurrency")
         if not isinstance(max_conc, int) or max_conc <= 0:
@@ -39,6 +39,8 @@ class AsyncSGLangEngineWrapper:
             self.phase2_batch_limit = max_conc
         self.circuit_breaker_failures = int(sglang_config.get("circuit_breaker_failures", 5))
         self._consecutive_failures = 0
+        # New: allow forcing chat endpoint usage if prompts are chat-formatted
+        self.force_chat = bool(sglang_config.get("force_chat", True))
 
         self.metrics: Dict[str, Any] = {
             "total_requests": 0,
@@ -48,16 +50,19 @@ class AsyncSGLangEngineWrapper:
             "in_flight": 0,
             "phase2_batches": 0,
             "circuit_breaker_trips": 0,
+            "fallback_http_used": 0,
+            "empty_choices": 0,
+            "chat_mode_calls": 0,
         }
 
     def get_metrics(self) -> Dict[str, Any]:
         return dict(self.metrics)
 
     def hot_swap(self, tmp_weights_path: str):
-        url = "http://localhost:30000/update_weights_from_disk"
+        url = f"{self.base_url.rsplit('/',1)[0]}/update_weights_from_disk"
         data = {"model_path": tmp_weights_path}
         try:
-            requests.post(url, json=data)
+            requests.post(url, json=data, timeout=10)
         except Exception:
             pass
 
@@ -69,7 +74,6 @@ class AsyncSGLangEngineWrapper:
                 return True
         except Exception:
             pass
-        # Fallback small completion
         try:
             payload = {
                 "model": self.model_name,
@@ -78,61 +82,161 @@ class AsyncSGLangEngineWrapper:
                 "temperature": 0,
             }
             resp = requests.post(f"{self.base_url}/completions", json=payload, timeout=3)
-            return resp.status_code == 200
+            return resp.status_code == 200 and 'choices' in resp.json()
         except Exception:
             return False
+
+    async def _http_fallback_completion(self, payload: Dict[str, Any]) -> Any:
+        """Fallback: direct HTTP POST to /completions and /chat/completions if SDK returned empty choices."""
+        def _do_post(url: str, data: Dict[str, Any]):
+            try:
+                r = requests.post(url, json=data, timeout=self.per_request_timeout)
+                return r.status_code, r.text
+            except Exception as e:
+                return 599, str(e)
+        # Try /completions then /chat/completions (convert prompt->messages)
+        comp_url = f"{self.base_url}/completions"
+        status_c, text_c = await asyncio.to_thread(_do_post, comp_url, payload)
+        parsed_c = None
+        try:
+            parsed_c = json.loads(text_c)
+        except Exception:
+            pass
+        if status_c == 200 and isinstance(parsed_c, dict) and parsed_c.get('choices'):
+            self.metrics['fallback_http_used'] += 1
+            return parsed_c
+        chat_payload = {
+            "model": payload.get("model", self.model_name),
+            "messages": [
+                {"role": "user", "content": payload.get("prompt", "")}
+            ],
+            "temperature": payload.get("temperature", 0),
+            "top_p": payload.get("top_p", 1),
+            "max_tokens": payload.get("max_tokens", 1),
+            "n": payload.get("n", 1),
+            "stop": payload.get("stop"),
+        }
+        chat_url = f"{self.base_url}/chat/completions"
+        status_chat, text_chat = await asyncio.to_thread(_do_post, chat_url, chat_payload)
+        parsed_chat = None
+        try:
+            parsed_chat = json.loads(text_chat)
+        except Exception:
+            pass
+        if status_chat == 200 and isinstance(parsed_chat, dict) and parsed_chat.get('choices'):
+            self.metrics['fallback_http_used'] += 1
+            return parsed_chat
+        print("[generation][FALLBACK] Both HTTP attempts failed.")
+        print(f"[generation][FALLBACK] /completions status={status_c} body_head={text_c[:200]}")
+        print(f"[generation][FALLBACK] /chat/completions status={status_chat} body_head={text_chat[:200]}")
+        class Dummy: choices = []
+        return Dummy()
 
     async def _completion_call(self, **kwargs):
         async with self._semaphore:
             self.metrics["in_flight"] += 1
             start = time.monotonic()
-            # First try OpenAI client
-            task = asyncio.create_task(self.client.completions.create(**kwargs))
+
+            # Detect chat-style prompt heuristically if force_chat not explicitly disabled
+            prompt_txt = kwargs.get("prompt", "") or ""
+            looks_chat = ("<|im_start|>" in prompt_txt) or prompt_txt.count("</think>") == 0 and ("system" in prompt_txt[:200])
+            use_chat = self.force_chat and looks_chat
+
             try:
+                if use_chat:
+                    # Convert single prompt into messages for chat endpoint
+                    self.metrics["chat_mode_calls"] += 1
+                    messages = [
+                        {"role": "user", "content": prompt_txt}
+                    ]
+                    chat_kwargs = {k: v for k, v in kwargs.items() if k != "prompt"}
+                    chat_kwargs["model"] = kwargs.get("model", self.model_name)
+                    chat_kwargs["messages"] = messages
+                    task = asyncio.create_task(self.client.chat.completions.create(**chat_kwargs))
+                else:
+                    task = asyncio.create_task(self.client.completions.create(**kwargs))
                 resp = await asyncio.wait_for(task, timeout=self.per_request_timeout)
                 self.metrics["total_requests"] += 1
+                if not getattr(resp, 'choices', None):
+                    self.metrics['empty_choices'] += 1
+                    print(f"[generation][WARN] Empty choices from SDK (chat={use_chat}); attempting HTTP fallback.")
+                    # Show truncated prompt for diagnostics
+                    print(f"[generation][WARN] Prompt_head: {prompt_txt[:160]!r}")
+                    fallback_payload = {
+                        "model": kwargs.get("model", self.model_name),
+                        "prompt": prompt_txt,
+                        "max_tokens": kwargs.get("max_tokens"),
+                        "temperature": kwargs.get("temperature"),
+                        "top_p": kwargs.get("top_p"),
+                        "n": kwargs.get("n", 1),
+                        "stop": kwargs.get("stop"),
+                    }
+                    fb = await self._http_fallback_completion(fallback_payload)
+                    if isinstance(fb, dict) and fb.get('choices'):
+                        class _Resp:  # mimic openai object with .choices list
+                            def __init__(self, raw):
+                                self.choices = raw['choices']
+                        print("[generation][INFO] HTTP fallback succeeded; using fallback response.")
+                        return _Resp(fb)
                 return resp
             except asyncio.TimeoutError:
-                raise
                 self.metrics["timeouts"] += 1
+                print("[generation] Timeout in _completion_call")
                 class Dummy: choices = []
                 return Dummy()
             except Exception as e:
                 import traceback
-                print("ERROR:", e)
-                traceback.print_exc()
-                raise
                 self.metrics["errors"] += 1
+                print("[generation] ERROR in _completion_call:", e)
+                traceback.print_exc()
                 class Dummy: choices = []
                 return Dummy()
             finally:
                 self.metrics["total_time"] += (time.monotonic() - start)
                 self.metrics["in_flight"] -= 1
 
-    # Helper to compute entropy/exploration from top_logprobs dict and selected token logprob
     def _entropy_and_explore_from_top_logprobs(self, top_lp: Dict[Any, float], token_lp: Optional[float]) -> Tuple[Optional[float], Optional[float]]:
-        """
-        Inputs:
-          - top_lp: dict mapping token->logprob for the top candidates at a position.
-          - token_lp: logprob of the actually selected token at this position.
-        Returns (entropy_nats, exploration_score) where:
-          entropy_nats = -Σ p_i log p_i with p_i from normalized exp(logprob)
-          exploration_score = 1 - P_selected, with P_selected from normalized probability of selected token
-        If inputs are missing/invalid, returns (None, None).
-        """
-
         probs = [math.exp(lp) for lp in top_lp.values()]
-
         Z = sum(probs)
         if Z <= 0 or not math.isfinite(Z):
             return None, None
         probs = [p / Z for p in probs]
-        # Entropy (nats)
         entropy = -sum(p * math.log(p) for p in probs if p > 0)
-        # Exploration score
-        p_selected = math.exp(token_lp) / Z
-
+        try:
+            p_selected = math.exp(token_lp) / Z if token_lp is not None else None
+        except Exception:
+            p_selected = None
         return entropy, p_selected
+
+    def _extract_choice_text(self, choice: Any) -> str:
+        """Return textual content from either completion or chat completion choice.
+        Supports OpenAI-style choices with .text or .message.content, and raw dicts.
+        """
+        if choice is None:
+            return ""
+        # Attribute access variants
+        txt = getattr(choice, "text", None)
+        if isinstance(txt, str) and txt:
+            return txt
+        # Chat style
+        msg = getattr(choice, "message", None)
+        if msg is not None:
+            content = getattr(msg, "content", None)
+            if isinstance(content, str) and content:
+                return content
+            # If message is dict
+            if isinstance(msg, dict):
+                c = msg.get("content")
+                if isinstance(c, str):
+                    return c
+        # Dict fallback
+        if isinstance(choice, dict):
+            if isinstance(choice.get("text"), str):
+                return choice["text"]
+            message = choice.get("message")
+            if isinstance(message, dict) and isinstance(message.get("content"), str):
+                return message["content"]
+        return ""
 
     async def _two_phase_for_one_prompt(
         self,
@@ -147,61 +251,56 @@ class AsyncSGLangEngineWrapper:
         answer_max_new_tokens: int,
         answer_stop: List[str],
     ) -> List[tuple[str, int, float, float]]:
-        """Two-phase generation for a single prompt with bounded concurrency & cancellation safety.
-        Returns tuples of (full_text, phase_flag, avg_entropy) where phase_flag=1 if answer appended.
-        avg_entropy is computed from phase-1 top_logprobs per sample when available, else None.
-        """
         payload_extra_1 = {"top_k": think_top_k, "repetition_penalty": think_repetition_penalty}
-        # Phase 1
-        resp1 = await self._completion_call(
-            model=self.model_name,
-            prompt=base_prompt,
-            n=n_samples,
-            temperature=think_temperature,
-            top_p=think_top_p,
-            max_tokens=think_max_new_tokens,
-            stop=[THINK_STOP],
-            extra_body=payload_extra_1,
-            logprobs=20,
-        )
-        results: List[tuple[str, int, float, float]] = [("", 0, None, None)] * (len(resp1.choices))
-        phase2_items: List[Tuple[int, str, str, Optional[float]]] = []
-        for idx, choice in enumerate(getattr(resp1, "choices", [])):
-            think_piece = (getattr(choice, "text", "") or "")
+        try:
+            resp1 = await self._completion_call(
+                model=self.model_name,
+                prompt=base_prompt,
+                n=n_samples,
+                temperature=think_temperature,
+                top_p=think_top_p,
+                max_tokens=think_max_new_tokens,
+                stop=[THINK_STOP],
+                extra_body=payload_extra_1,
+                logprobs=20,
+            )
+        except Exception as e:
+            print(f"[generation] Phase1 fatal error for prompt: {e}")
+            return []
+        choices_phase1 = getattr(resp1, "choices", [])
+        if not choices_phase1:
+            print("[generation][WARN] Phase1 produced zero choices.")
+        results: List[tuple[str, int, float, float]] = [("", 0, None, None)] * len(choices_phase1)
+        phase2_items: List[Tuple[int, str, str, Optional[float], Optional[float]]] = []
+        for idx, choice in enumerate(choices_phase1):
+            think_piece = self._extract_choice_text(choice)
             finish_reason = getattr(choice, "finish_reason", None)
-            # Compute avg entropy from logprobs if available
             avg_entropy: Optional[float] = None
             avg_p_selected: Optional[float] = None
             lp_obj = getattr(choice, "logprobs", None)
-            top_lps = getattr(lp_obj, "top_logprobs", None)
-            token_lps = getattr(lp_obj, "token_logprobs", None)
-
+            top_lps = getattr(lp_obj, "top_logprobs", None) or []
+            token_lps = getattr(lp_obj, "token_logprobs", None) or []
             entropies: List[float] = []
-            ps_selcted: List[float] = []
+            ps_selected: List[float] = []
             for top_lp, token_lp in zip(top_lps, token_lps):
-                h, p_selected = self._entropy_and_explore_from_top_logprobs(top_lp, token_lp)
+                h, p_sel = self._entropy_and_explore_from_top_logprobs(top_lp, token_lp)
                 if h is not None:
                     entropies.append(h)
-                if p_selected is not None:
-                    ps_selcted.append(p_selected)
+                if p_sel is not None:
+                    ps_selected.append(p_sel)
             if entropies:
                 avg_entropy = sum(entropies) / len(entropies)
-            if ps_selcted:
-                avg_p_selected = sum(ps_selcted) / len(ps_selcted)
-            # If stopped incorrectly or contains boxed answer in think, finalize think-only
+            if ps_selected:
+                avg_p_selected = sum(ps_selected) / len(ps_selected)
             if finish_reason != "stop" or re.findall(r"\\boxed\s*{(.*?)}", think_piece or "", flags=re.DOTALL):
-
                 results[idx] = (think_piece, 0, avg_entropy, avg_p_selected)
                 continue
             think_clean = think_piece.split(THINK_STOP, 1)[0] if THINK_STOP in think_piece else think_piece
             context = base_prompt + think_clean + THINK_STOP
-
             phase2_items.append((idx, think_clean, context, avg_entropy, avg_p_selected))
         if not phase2_items:
             return results
-
         payload_extra_2 = {"top_k": 0, "repetition_penalty": 1.0}
-
         async def _greedy(ctx: str):
             return await self._completion_call(
                 model=self.model_name,
@@ -213,35 +312,28 @@ class AsyncSGLangEngineWrapper:
                 stop=answer_stop if answer_stop else None,
                 extra_body=payload_extra_2,
             )
-
         import traceback
         try:
-
             for start_idx in range(0, len(phase2_items), self.phase2_batch_limit):
                 batch = phase2_items[start_idx:start_idx + self.phase2_batch_limit]
                 tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx, _, _ in batch]
                 self.metrics["phase2_batches"] += 1
                 gathered = await asyncio.gather(*tasks, return_exceptions=True)
                 for (idx, think_clean, _ctx, avg_entropy, avg_p_selected), resp2 in zip(batch, gathered):
-
                     if isinstance(resp2, Exception) or not getattr(resp2, "choices", None):
-                        # fallback to think only
                         full_text = think_clean + THINK_STOP
                         results[idx] = (full_text, 0, avg_entropy, avg_p_selected)
                         continue
-                    answer_text = (resp2.choices[0].text or "") if resp2.choices else ""
+                    ans_choice = resp2.choices[0] if resp2.choices else None
+                    answer_text = self._extract_choice_text(ans_choice)
                     full_text = think_clean + THINK_STOP + answer_text
                     results[idx] = (full_text, 1, avg_entropy, avg_p_selected)
-                await asyncio.sleep(random.uniform(0.005, 0.02))  # jitter between batches
+                await asyncio.sleep(random.uniform(0.005, 0.02))
         except asyncio.CancelledError:
-            # Cancel outstanding tasks if any - tasks already awaited inside loop; just propagate
             raise
         except Exception as e:
-            print("ERROR:", e)
+            print("[generation] Phase2 error:", e)
             traceback.print_exc()
-            raise
-            # In case of unexpected exception, keep existing partial results (think only)
-            pass
         return results
 
     async def generate_candidates(
@@ -250,9 +342,6 @@ class AsyncSGLangEngineWrapper:
         n_samples: int,
         **gen_cfg: Any,
     ) -> List[List[tuple[str, int, float, float]]]:
-        """Generate candidates for each prompt using two-phase method with config values.
-        Implements circuit breaker on repeated empty generations. Returns (text, phase_flag, avg_entropy).
-        """
         think_temperature = gen_cfg.get("think_temperature")
         think_top_p = gen_cfg.get("think_top_p")
         think_top_k = gen_cfg.get("think_top_k")
@@ -260,8 +349,7 @@ class AsyncSGLangEngineWrapper:
         think_max_new_tokens = gen_cfg.get("think_max_new_tokens")
         answer_max_new_tokens = gen_cfg.get("answer_max_new_tokens")
         answer_stop = gen_cfg.get("answer_stop")
-        TIMEOUT_SEC = gen_cfg.get("timeout", 500)  # overall internal timeout per prompt (soft used below)
-
+        TIMEOUT_SEC = gen_cfg.get("timeout", 500)
         tasks = []
         for p in prompts:
             coro = self._two_phase_for_one_prompt(
@@ -279,32 +367,27 @@ class AsyncSGLangEngineWrapper:
                 try:
                     return await asyncio.wait_for(coro, timeout=TIMEOUT_SEC)
                 except asyncio.TimeoutError:
-                    raise
+                    print(f"[generation] Prompt timeout: {prompt[:60]}...")
                     return []
-                except asyncio.CancelledError:
-                    raise
                 except Exception as e:
                     import traceback
-                    print("ERROR:", e)
+                    print(f"[generation] Prompt error for '{prompt[:60]}...':", e)
                     traceback.print_exc()
-                    raise
                     return []
             tasks.append(asyncio.create_task(run_with_timeout()))
-
         try:
             results = await asyncio.gather(*tasks, return_exceptions=True)
         except asyncio.CancelledError:
             for t in tasks:
                 t.cancel()
             import traceback
-
             traceback.print_exc()
             raise
-
         normalized: List[List[tuple[str, int, float, float]]] = []
         empty_all = True
         for r in results:
             if isinstance(r, Exception):
+                print("[generation] Gathered exception (suppressed):", r)
                 normalized.append([])
             else:
                 normalized.append(r)
