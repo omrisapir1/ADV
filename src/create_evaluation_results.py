@@ -42,8 +42,8 @@ def load_config(path: str) -> EvalSettings:
     q_field = dcfg.get("field_question", "problem")
     a_field = dcfg.get("field_answer", "final_answer")
     split = 'test'
-    n_samples = 2
-    batch_size = 2
+    n_samples = 124
+    batch_size = 8
     generation_cfg = cfg.get("generation")
     print(generation_cfg)
     return EvalSettings(
@@ -88,6 +88,8 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
         prompts = build_prompts(batch_q, tokenizer)
         raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_cfg)
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
+        entropies = [[c[2] for c in row] for row in raw_candidates]
+        selected_ps = [[c[3] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers[start:end])
         for i, q in enumerate(batch_q):
             row_candidates = candidate_texts[i]
@@ -95,10 +97,12 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
             out_rows.append({
                 "question": q,
                 "gold_answer": gold_answers[start + i],
+                "selected_ps": selected_ps[i],
+                "entropies": entropies[i],
                 "candidates": row_candidates,
                 "correctness": row_correct,
             })
-        return out_rows
+
     return out_rows
 
 
