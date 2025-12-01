@@ -66,7 +66,7 @@ class AsyncSGLangEngineWrapper:
             max_tokens=think_max_new_tokens,
             stop=[THINK_STOP],
             extra_body=payload_extra_1,
-            logprobs=20,
+            # logprobs=20,
         )
         # initialize results with placeholders (NaN for missing stats)
         results: List[tuple[str, int, float, float]] = [("", 0, float("nan"), float("nan"))] * len(resp1.choices)
