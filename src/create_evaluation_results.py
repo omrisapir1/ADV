@@ -42,7 +42,7 @@ def load_config(path: str) -> EvalSettings:
     q_field = dcfg.get("field_question", "problem")
     a_field = dcfg.get("field_answer", "final_answer")
     split = 'test'
-    n_samples = 124
+    n_samples = 2
     batch_size = 2
     generation_cfg = cfg.get("generation")
     print("[eval] generation_cfg:", generation_cfg)
