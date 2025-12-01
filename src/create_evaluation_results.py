@@ -84,8 +84,9 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
         end = min(start + batch_size, len(questions))
         batch_q = questions[start:end]
         prompts = build_prompts(batch_q, tokenizer)
-        exit()
+
         print("[eval] prompts:", prompts)
+        exit()
         print(f"[eval] Generating batch start={start} size={len(batch_q)}")
         raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_cfg)
         print(f"[eval] Raw candidates lens: {[len(r) for r in raw_candidates]}")
