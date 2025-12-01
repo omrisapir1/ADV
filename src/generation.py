@@ -128,7 +128,7 @@ class AsyncSGLangEngineWrapper:
                     max_tokens=answer_max_new_tokens,
                     stop=answer_stop if answer_stop else None,
                 )
-        tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx in phase2_items]
+        tasks = [asyncio.create_task(_greedy(ctx)) for _, _, ctx, _,  _ in phase2_items]
         resp2_list = await asyncio.gather(*tasks)
         for (idx, think_clean, _, ae, aps), resp2 in zip(phase2_items, resp2_list):
             answer_text = (resp2.choices[0].text or "") if resp2.choices else ""
