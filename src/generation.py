@@ -96,7 +96,11 @@ class AsyncSGLangEngineWrapper:
                 self.metrics["timeouts"] += 1
                 class Dummy: choices = []
                 return Dummy()
-            except Exception:
+            except Exception as e:
+                import traceback
+                print("ERROR:", e)
+                traceback.print_exc()
+                raise
                 self.metrics["errors"] += 1
                 class Dummy: choices = []
                 return Dummy()
@@ -115,13 +119,9 @@ class AsyncSGLangEngineWrapper:
           exploration_score = 1 - P_selected, with P_selected from normalized probability of selected token
         If inputs are missing/invalid, returns (None, None).
         """
-        if not top_lp or not isinstance(top_lp, dict):
-            return None, None
-        # Convert logprobs to probabilities
-        try:
-            probs = [math.exp(lp) for lp in top_lp.values()]
-        except Exception:
-            return None, None
+
+        probs = [math.exp(lp) for lp in top_lp.values()]
+
         Z = sum(probs)
         if Z <= 0 or not math.isfinite(Z):
             return None, None
@@ -281,7 +281,11 @@ class AsyncSGLangEngineWrapper:
                     return []
                 except asyncio.CancelledError:
                     raise
-                except Exception:
+                except Exception as e:
+                    import traceback
+                    print("ERROR:", e)
+                    traceback.print_exc()
+                    raise
                     return []
             tasks.append(asyncio.create_task(run_with_timeout()))
 
@@ -290,6 +294,9 @@ class AsyncSGLangEngineWrapper:
         except asyncio.CancelledError:
             for t in tasks:
                 t.cancel()
+            import traceback
+
+            traceback.print_exc()
             raise
 
         normalized: List[List[tuple[str, int, float, float]]] = []

@@ -91,7 +91,7 @@ class AsyncTreeOfThoughtSGLangEngineWrapper:
                     temperature=0.7,
                     top_p=0.7,
                     max_tokens=think_max_new_tokens,
-                    # stop=[THINK_STOP],
+                    stop=[THINK_STOP],
                     extra_body={"top_k": 200},
                 )
         except Exception as e:
