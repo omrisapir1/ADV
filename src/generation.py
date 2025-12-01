@@ -93,6 +93,7 @@ class AsyncSGLangEngineWrapper:
                 self.metrics["total_requests"] += 1
                 return resp
             except asyncio.TimeoutError:
+                raise
                 self.metrics["timeouts"] += 1
                 class Dummy: choices = []
                 return Dummy()
