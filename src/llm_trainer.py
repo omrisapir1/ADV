@@ -423,14 +423,14 @@ class LLMTrainer:
                     input_ids=batch["input_ids"].to(self.model.device),
                     attention_mask=batch["attention_mask"].to(self.model.device),
                 )
-                logits = outputs.logits  # (B,S,V)
+                logits = outputs.logits.to("cpu")  # (B,S,V) move to CPU
                 # Shift for causal LM (align to labels)
-                logprobs = F.log_softmax(logits[:, :-1, :], dim=-1)  # (B,S-1,V)
-                labels = batch["input_ids"].to(self.model.device)[:, 1:]  # (B,S-1)
+                logprobs = F.log_softmax(logits[:, :-1, :], dim=-1)  # (B,S-1,V) on CPU
+                labels = batch["input_ids"].cpu()[:, 1:]  # (B,S-1) on CPU
                 token_logprobs = torch.gather(
                     logprobs, dim=-1, index=labels.unsqueeze(-1)
                 ).squeeze(-1)  # (B,S-1)
-                comp_mask_dev = comp_mask.to(self.model.device)
+                comp_mask_dev = comp_mask.to("cpu")
                 # sequence mean logprob over completion tokens
                 masked_lp = token_logprobs.masked_fill(~comp_mask_dev, 0.0)
                 lengths = comp_mask_dev.sum(dim=-1).clamp(min=1)
