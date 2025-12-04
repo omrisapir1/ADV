@@ -492,7 +492,7 @@ async def training_loop(config: Dict[str, Any]):
 
 
         torch.cuda.empty_cache()
-        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions_f, candidates_f, correctness_tensor, rm_scores, explore_scores, alpha)
+        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions_f, candidates_f, correctness_tensor, rm_scores, entropy_scores, alpha)
         if not triplets_for_rm:
             continue
 
