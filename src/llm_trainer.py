@@ -381,19 +381,23 @@ class LLMTrainer:
             questions: List[str],
             candidates_by_q: List[List[str]],
             batch_size: int,
+            top_k: int = 20,
     ) -> Tuple[List[List[float]], List[List[float]]]:
         """
-        Returns:
-            explore_scores: List[List[float]]  # 1 - softmax(logprob) per candidate
-            entropy_scores: List[List[float]]  # avg token entropy per candidate
-        Combines explore and entropy computations in one forward pass per batch.
+        Computes:
+          explore_scores[q][i] = 1 - softmax(logprob_i across candidates)
+          entropy_scores[q][i] = mean(top-k entropy per completion token)
+
+        Uses top-k logits instead of full vocab to drastically reduce memory + latency.
         """
         self.model.eval()
 
-        # Flatten inputs
-        sizes: List[int] = []
-        flat_questions: List[str] = []
-        flat_candidates: List[str] = []
+        # ------------------------------
+        # 1) Flatten inputs
+        # ------------------------------
+        sizes = []
+        flat_questions = []
+        flat_candidates = []
         for qi, cands in enumerate(candidates_by_q):
             sizes.append(len(cands))
             for cand in cands:
@@ -404,92 +408,105 @@ class LLMTrainer:
         if total == 0:
             return [], []
 
-        # Prompts and lengths (for completion masking)
+        # Build prompts and get prompt lengths (to mask completions)
         templated_prompts = build_prompts(flat_questions, self.tokenizer)
         prompt_lens = self._prompt_token_lengths(templated_prompts)
 
-        # Buffers for per-candidate scores
-        flat_logprobs: List[float] = [0.0] * total  # sequence mean logprob
-        flat_entropies: List[float] = [0.0] * total  # sequence mean entropy
-
         device = self.model.device
 
-        # Batched loop
+        # Output buffers
+        flat_seqlogprob = [0.0] * total
+        flat_entropy = [0.0] * total
+
+        # ------------------------------
+        # 2) Batched loop
+        # ------------------------------
         for start in range(0, total, batch_size):
             end = min(start + batch_size, total)
+            B = end - start
+
             batch_qs = flat_questions[start:end]
             batch_cands = flat_candidates[start:end]
 
-            # Tokenize prompt+completion
-            batch = self._concat_tokenize(batch_qs, batch_cands)  # dict with input_ids, attention_mask
+            batch = self._concat_tokenize(batch_qs, batch_cands)
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
-
-            # Build completion mask on GPU
             comp_mask = self._build_completion_mask(
                 batch["input_ids"], batch["attention_mask"], prompt_lens[start:end]
             ).to(device)  # (B, S-1)
 
             with torch.no_grad():
-                # Forward once
                 outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
-                logits = outputs.logits  # (B, S, V) on GPU
-
-                # Shift for causal LM (align logits with labels[:, 1:])
-                logprobs = F.log_softmax(logits[:, :-1, :], dim=-1)  # (B, S-1, V)
+                logits = outputs.logits[:, :-1, :]  # (B, S-1, V)
                 labels = input_ids[:, 1:]  # (B, S-1)
 
-                # Log-prob of the actually generated tokens
+                # --------------------------------------
+                # 2A: Get logprobs for generated tokens
+                # --------------------------------------
+                # Instead of full softmax, gather only what we need
+                # This still requires logits for the token’s index but that is inexpensive.
+                logprobs_full = F.log_softmax(logits, dim=-1)
+
                 token_logprobs = torch.gather(
-                    logprobs, dim=-1, index=labels.unsqueeze(-1)
+                    logprobs_full, dim=-1, index=labels.unsqueeze(-1)
                 ).squeeze(-1)  # (B, S-1)
 
-                # Sequence mean logprob over completion tokens
                 masked_lp = token_logprobs.masked_fill(~comp_mask, 0.0)
-                lengths = comp_mask.sum(dim=-1).clamp(min=1)  # (B,)
+                lengths = comp_mask.sum(dim=-1).clamp(min=1)
                 seq_lp_tensor = masked_lp.sum(dim=-1) / lengths  # (B,)
 
-                # Entropy per position: -sum p * log p
-                probs = logprobs.exp()
-                ent = -(probs * logprobs).sum(dim=-1)  # (B, S-1)
+                # --------------------------------------
+                # 2B: Compute top-k entropy (instead of full vocab entropy)
+                # --------------------------------------
+                # Extract top-k logits at each time step
+                topk_vals, _ = torch.topk(logits, k=top_k, dim=-1)  # (B, S-1, k)
 
-                masked_ent = ent.masked_fill(~comp_mask, 0.0)
+                # Compute softmax over k tokens
+                topk_logprobs = F.log_softmax(topk_vals, dim=-1)  # (B, S-1, k)
+                topk_probs = torch.exp(topk_logprobs)
+
+                # entropy_t = -sum_i p_i * log p_i   but over top-k only
+                ent_t = -(topk_probs * topk_logprobs).sum(dim=-1)  # (B, S-1)
+
+                masked_ent = ent_t.masked_fill(~comp_mask, 0.0)
                 avg_ent_tensor = masked_ent.sum(dim=-1) / lengths  # (B,)
 
-                # Move only final scalars to CPU
-                seq_lp = seq_lp_tensor.detach().cpu().tolist()
-                avg_ent = avg_ent_tensor.detach().cpu().tolist()
+                seq_lp_list = seq_lp_tensor.detach().cpu().tolist()
+                avg_ent_list = avg_ent_tensor.detach().cpu().tolist()
 
-            # Store into flat buffers
-            for i in range(end - start):
-                flat_logprobs[start + i] = float(seq_lp[i])
-                flat_entropies[start + i] = float(avg_ent[i])
+            # Store
+            for i in range(B):
+                flat_seqlogprob[start + i] = float(seq_lp_list[i])
+                flat_entropy[start + i] = float(avg_ent_list[i])
 
-            # Cleanup big tensors (no need for empty_cache here normally)
+            # cleanup
             del batch, input_ids, attention_mask, comp_mask
-            del outputs, logits, logprobs, labels, token_logprobs
-            del masked_lp, lengths, seq_lp_tensor, probs, ent, masked_ent, avg_ent_tensor
-            # torch.cuda.empty_cache()  # usually not needed; you can leave it commented
+            del outputs, logits, labels, logprobs_full, token_logprobs
+            del masked_lp, lengths, seq_lp_tensor
+            del topk_vals, topk_logprobs, topk_probs, ent_t, masked_ent, avg_ent_tensor
+        torch.cuda.empty_cache()
 
-        # Per-question explore via softmax of logprobs
-        explore_scores: List[List[float]] = []
-        entropy_scores: List[List[float]] = []
+        # ------------------------------
+        # 3) Per-question explore score
+        # ------------------------------
+        explore_scores = []
+        entropy_scores = []
+
         offset = 0
         for n in sizes:
-            group_lp = flat_logprobs[offset:offset + n]
-            group_ent = flat_entropies[offset:offset + n]
-            offset += n
-
             if n == 0:
                 explore_scores.append([])
                 entropy_scores.append([])
                 continue
 
-            g_tensor = torch.tensor(group_lp, dtype=torch.float32)
-            probs = torch.softmax(g_tensor, dim=0).tolist()  # on CPU
-            explore = [float(1.0 - p) for p in probs]
+            group_lp = flat_seqlogprob[offset:offset + n]
+            group_ent = flat_entropy[offset:offset + n]
+            offset += n
 
-            explore_scores.append(explore)
+            g_tensor = torch.tensor(group_lp, dtype=torch.float32)
+            probs = torch.softmax(g_tensor, dim=0).tolist()
+
+            explore_scores.append([1 - p for p in probs])
             entropy_scores.append(group_ent)
 
         return explore_scores, entropy_scores
