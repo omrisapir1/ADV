@@ -377,10 +377,10 @@ class LLMTrainer:
         return result
 
     def compute_explore_and_entropy_scores(
-        self,
-        questions: List[str],
-        candidates_by_q: List[List[str]],
-        batch_size: int,
+            self,
+            questions: List[str],
+            candidates_by_q: List[List[str]],
+            batch_size: int,
     ) -> Tuple[List[List[float]], List[List[float]]]:
         """
         Returns:
@@ -389,6 +389,7 @@ class LLMTrainer:
         Combines explore and entropy computations in one forward pass per batch.
         """
         self.model.eval()
+
         # Flatten inputs
         sizes: List[int] = []
         flat_questions: List[str] = []
@@ -398,56 +399,78 @@ class LLMTrainer:
             for cand in cands:
                 flat_questions.append(questions[qi])
                 flat_candidates.append(cand)
+
         total = len(flat_candidates)
         if total == 0:
             return [], []
-        # Prompts and lengths
+
+        # Prompts and lengths (for completion masking)
         templated_prompts = build_prompts(flat_questions, self.tokenizer)
         prompt_lens = self._prompt_token_lengths(templated_prompts)
-        # Buffers
-        flat_logprobs: List[float] = [0.0] * total
-        flat_entropies: List[float] = [0.0] * total
+
+        # Buffers for per-candidate scores
+        flat_logprobs: List[float] = [0.0] * total  # sequence mean logprob
+        flat_entropies: List[float] = [0.0] * total  # sequence mean entropy
+
+        device = self.model.device
+
         # Batched loop
         for start in range(0, total, batch_size):
-            print(f"Start {start}")
             end = min(start + batch_size, total)
             batch_qs = flat_questions[start:end]
             batch_cands = flat_candidates[start:end]
-            # tokenize
-            batch = self._concat_tokenize(batch_qs, batch_cands)
+
+            # Tokenize prompt+completion
+            batch = self._concat_tokenize(batch_qs, batch_cands)  # dict with input_ids, attention_mask
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+
+            # Build completion mask on GPU
             comp_mask = self._build_completion_mask(
                 batch["input_ids"], batch["attention_mask"], prompt_lens[start:end]
-            )
-            # forward once
+            ).to(device)  # (B, S-1)
+
             with torch.no_grad():
-                outputs = self.model(
-                    input_ids=batch["input_ids"].to(self.model.device),
-                    attention_mask=batch["attention_mask"].to(self.model.device),
-                )
-                logits = outputs.logits.to("cpu")  # (B,S,V) move to CPU
-                # Shift for causal LM (align to labels)
-                logprobs = F.log_softmax(logits[:, :-1, :], dim=-1)  # (B,S-1,V) on CPU
-                labels = batch["input_ids"].cpu()[:, 1:]  # (B,S-1) on CPU
+                # Forward once
+                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                logits = outputs.logits  # (B, S, V) on GPU
+
+                # Shift for causal LM (align logits with labels[:, 1:])
+                logprobs = F.log_softmax(logits[:, :-1, :], dim=-1)  # (B, S-1, V)
+                labels = input_ids[:, 1:]  # (B, S-1)
+
+                # Log-prob of the actually generated tokens
                 token_logprobs = torch.gather(
                     logprobs, dim=-1, index=labels.unsqueeze(-1)
-                ).squeeze(-1)  # (B,S-1)
-                comp_mask_dev = comp_mask.to("cpu")
-                # sequence mean logprob over completion tokens
-                masked_lp = token_logprobs.masked_fill(~comp_mask_dev, 0.0)
-                lengths = comp_mask_dev.sum(dim=-1).clamp(min=1)
-                seq_lp = (masked_lp.sum(dim=-1) / lengths).detach().cpu().tolist()
-                # entropy per position: -sum p * log p
+                ).squeeze(-1)  # (B, S-1)
+
+                # Sequence mean logprob over completion tokens
+                masked_lp = token_logprobs.masked_fill(~comp_mask, 0.0)
+                lengths = comp_mask.sum(dim=-1).clamp(min=1)  # (B,)
+                seq_lp_tensor = masked_lp.sum(dim=-1) / lengths  # (B,)
+
+                # Entropy per position: -sum p * log p
                 probs = logprobs.exp()
-                ent = -(probs * logprobs).sum(dim=-1)  # (B,S-1)
-                masked_ent = ent.masked_fill(~comp_mask_dev, 0.0)
-                avg_ent = (masked_ent.sum(dim=-1) / lengths).detach().cpu().tolist()
-            # store
+                ent = -(probs * logprobs).sum(dim=-1)  # (B, S-1)
+
+                masked_ent = ent.masked_fill(~comp_mask, 0.0)
+                avg_ent_tensor = masked_ent.sum(dim=-1) / lengths  # (B,)
+
+                # Move only final scalars to CPU
+                seq_lp = seq_lp_tensor.detach().cpu().tolist()
+                avg_ent = avg_ent_tensor.detach().cpu().tolist()
+
+            # Store into flat buffers
             for i in range(end - start):
                 flat_logprobs[start + i] = float(seq_lp[i])
                 flat_entropies[start + i] = float(avg_ent[i])
-            # cleanup
-            del batch, comp_mask, outputs, logits, logprobs, labels, token_logprobs, comp_mask_dev, masked_lp, lengths, seq_lp, probs, ent, masked_ent, avg_ent
-            torch.cuda.empty_cache()
+
+            # Cleanup big tensors (no need for empty_cache here normally)
+            del batch, input_ids, attention_mask, comp_mask
+            del outputs, logits, logprobs, labels, token_logprobs
+            del masked_lp, lengths, seq_lp_tensor, probs, ent, masked_ent, avg_ent_tensor
+            # torch.cuda.empty_cache()  # usually not needed; you can leave it commented
+
         # Per-question explore via softmax of logprobs
         explore_scores: List[List[float]] = []
         entropy_scores: List[List[float]] = []
@@ -456,16 +479,21 @@ class LLMTrainer:
             group_lp = flat_logprobs[offset:offset + n]
             group_ent = flat_entropies[offset:offset + n]
             offset += n
+
             if n == 0:
                 explore_scores.append([])
                 entropy_scores.append([])
                 continue
+
             g_tensor = torch.tensor(group_lp, dtype=torch.float32)
-            probs = torch.softmax(g_tensor, dim=0).cpu().tolist()
+            probs = torch.softmax(g_tensor, dim=0).tolist()  # on CPU
             explore = [float(1.0 - p) for p in probs]
+
             explore_scores.append(explore)
             entropy_scores.append(group_ent)
+
         return explore_scores, entropy_scores
+
 
 def load_llm_trainer(model_name: str, gpu_id: int, num_steps: int, config: Optional[Dict[str, Any]] = None) -> LLMTrainer:
     return LLMTrainer(model_name, gpu_id, num_steps, config)
