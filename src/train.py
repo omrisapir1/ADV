@@ -460,14 +460,10 @@ async def training_loop(config: Dict[str, Any]):
         correctness_tensor = torch.zeros(len(candidates_f), max_k, dtype=torch.int32)
         for qi, row in enumerate(correctness_filtered_list):
             correctness_tensor[qi, :len(row)] = torch.tensor(row, dtype=torch.int32)
-        st = time.time()
-        try:
-            rm_scores = rm_model.score_reference(questions_f, candidates_f, rm_config)
-        except Exception as e:
-            print(f"[Step {step}] Exception during RM scoring: {e} will retry batch with 0.25 batch size.")
-            torch.cuda.empty_cache()
-            rm_scores = rm_model.score_reference(questions_f, candidates_f, rm_config, forced_small_batch_size=True)
-        print(f"[Step {step}] RM Scoring time: {time.time() - st:.2f}s")
+
+
+
+
 
         st = time.time()
         try:
@@ -477,6 +473,18 @@ async def training_loop(config: Dict[str, Any]):
             torch.cuda.empty_cache()
             explore_scores, entropy_scores = llm_trainer.compute_explore_and_entropy_scores(questions_f, candidates_f, 12)
         print(f"[Step {step}] Explore score time: {time.time() - st:.2f}s")
+
+
+
+        st = time.time()
+        try:
+            rm_scores = rm_model.score_reference(questions_f, candidates_f, rm_config)
+        except Exception as e:
+            print(f"[Step {step}] Exception during RM scoring: {e} will retry batch with 0.25 batch size.")
+            torch.cuda.empty_cache()
+            rm_scores = rm_model.score_reference(questions_f, candidates_f, rm_config, forced_small_batch_size=True)
+        print(f"[Step {step}] RM Scoring time: {time.time() - st:.2f}s")
+
 
 
         torch.cuda.empty_cache()

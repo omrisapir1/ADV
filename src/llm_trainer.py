@@ -409,6 +409,7 @@ class LLMTrainer:
         flat_entropies: List[float] = [0.0] * total
         # Batched loop
         for start in range(0, total, batch_size):
+            print(f"Start {start}")
             end = min(start + batch_size, total)
             batch_qs = flat_questions[start:end]
             batch_cands = flat_candidates[start:end]
