@@ -402,7 +402,7 @@ class LLMTrainer:
             sizes.append(len(cands))
             for cand in cands:
                 flat_questions.append(questions[qi])
-                flat_candidates.append(cand)
+                flat_candidates.append(self.clear_solution(cand))
 
         total = len(flat_candidates)
         if total == 0:
@@ -511,6 +511,16 @@ class LLMTrainer:
 
         return explore_scores, entropy_scores
 
+    @staticmethod
+    def clear_solution(full_solution: str) -> str:
+        if '</think>' in full_solution:
+            return full_solution[:full_solution.rfind('</think>')] + '</think>'
+        if len(full_solution) < 50:
+            return '</think>'
+        ind = full_solution[:-50].rfind("\n")
+        if ind == -1:
+            return '</think>'
+        return full_solution[:ind] + '</think>'
 
 def load_llm_trainer(model_name: str, gpu_id: int, num_steps: int, config: Optional[Dict[str, Any]] = None) -> LLMTrainer:
     return LLMTrainer(model_name, gpu_id, num_steps, config)

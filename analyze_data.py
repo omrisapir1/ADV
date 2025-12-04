@@ -47,29 +47,29 @@ def select_candidates(entry: Dict[str, Any]) -> Dict[str, Any]:
         }
     """
     gold_answer = entry["gold_answer"]
-    rm_score = entry["rm_scores"]
+    explore_score = entry["explore_scores"]
     correctness = entry["correctness"]
     candidates = entry["candidates"]
 
-    highest_0 = None
-    lowest_1 = None
+    lowest_0 = None
+    highest_1 = None
 
     # Find highest rm_score where correctness == 0
     zero_indices = [i for i, c in enumerate(correctness) if c == 0]
     if zero_indices:
-        best_zero_idx = max(zero_indices, key=lambda i: rm_score[i])
-        highest_0 = candidates[best_zero_idx]
+        best_zero_idx = min(zero_indices, key=lambda i: explore_score[i])
+        highest_1 = candidates[best_zero_idx]
 
     # Find lowest rm_score where correctness == 1
     one_indices = [i for i, c in enumerate(correctness) if c == 1]
     if one_indices:
-        worst_one_idx = min(one_indices, key=lambda i: rm_score[i])
-        lowest_1 = candidates[worst_one_idx]
+        worst_one_idx = max(one_indices, key=lambda i: explore_score[i])
+        lowest_0 = candidates[worst_one_idx]
 
     return {
         "gold_answer": gold_answer,
-        "highest_0": highest_0,
-        "lowest_1": lowest_1,
+        "highest_1": highest_1,
+        "lowest_0": lowest_0,
     }
 
 path ='/workspace/ADV/evaluation_logs/'
