@@ -471,11 +471,11 @@ async def training_loop(config: Dict[str, Any]):
 
         st = time.time()
         try:
-            explore_scores, entropy_scores = llm_trainer.compute_explore_and_entropy_scores(questions_f, candidates_f, 200)
+            explore_scores, entropy_scores = llm_trainer.compute_explore_and_entropy_scores(questions_f, candidates_f, 50)
         except Exception as e:
             print(f"[Step {step}] Exception during explore/entropy scoring: {e} will retry batch with 0.25 batch size.")
             torch.cuda.empty_cache()
-            explore_scores, entropy_scores = llm_trainer.compute_explore_and_entropy_scores(questions_f, candidates_f, 50)
+            explore_scores, entropy_scores = llm_trainer.compute_explore_and_entropy_scores(questions_f, candidates_f, 12)
         print(f"[Step {step}] Explore score time: {time.time() - st:.2f}s")
 
 
