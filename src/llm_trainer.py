@@ -296,5 +296,175 @@ class LLMTrainer:
         ).to(self.device)
 
 
+    def compute_kl_scores(
+        self,
+        questions: List[str],
+        candidates_by_q: List[List[str]],
+        batch_size: int,
+    ) -> List[List[float]]:
+        """
+        Compute mean per-token KL divergence KL(pol || ref) over completion tokens for each candidate.
+        Returns nested List[List[float]].
+        """
+        self.model.eval()
+        if hasattr(self.reference_model, "eval"):
+            self.reference_model.eval()
+        # Flatten
+        flat_questions: List[str] = []
+        flat_candidates: List[str] = []
+        sizes: List[int] = []
+        for qi, cands in enumerate(candidates_by_q):
+            sizes.append(len(cands))
+            for cand in cands:
+                flat_questions.append(questions[qi])
+                flat_candidates.append(cand)
+        templated_prompts = build_prompts(flat_questions, self.tokenizer)
+        prompt_lens = self._prompt_token_lengths(templated_prompts)
+        flat_kls: List[float] = [0.0] * len(flat_candidates)
+        for start in range(0, len(flat_candidates), batch_size):
+            end = min(start + batch_size, len(flat_candidates))
+            batch_qs = flat_questions[start:end]
+            batch_cands = flat_candidates[start:end]
+            batch = self._concat_tokenize(batch_qs, batch_cands)
+            comp_mask = self._build_completion_mask(
+                batch["input_ids"], batch["attention_mask"], prompt_lens[start:end]
+            )
+            try:
+                with torch.no_grad():
+                    # policy logits
+                    pol_outputs = self.model(
+                        input_ids=batch["input_ids"].to(self.model.device),
+                        attention_mask=batch["attention_mask"].to(self.model.device),
+                    )
+                    pol_logits = pol_outputs.logits  # (B,S,V)
+                    pol_logprobs = F.log_softmax(pol_logits[:, :-1, :], dim=-1)  # (B,S-1,V)
+                    pol_probs = pol_logprobs.exp()  # (B,S-1,V)
+
+                    # reference logits
+                    ref_outputs = self.reference_model(
+                        input_ids=batch["input_ids"].to(self.reference_model.device),
+                        attention_mask=batch["attention_mask"].to(self.reference_model.device),
+                    )
+                    ref_logits = ref_outputs.logits
+                    ref_logprobs = F.log_softmax(ref_logits[:, :-1, :], dim=-1)
+
+                    # KL per position: sum p_pol * (log p_pol - log p_ref)
+                    kl_pos = (pol_probs * (pol_logprobs - ref_logprobs.to(pol_probs.device))).sum(dim=-1)  # (B,S-1)
+
+                    # mask to completion tokens
+                    comp_mask_dev = comp_mask.to(pol_probs.device)
+                    masked = kl_pos.masked_fill(~comp_mask_dev, 0.0)
+                    lengths = comp_mask.sum(dim=-1).clamp(min=1).to(pol_probs.device)
+                    mean_kl = (masked.sum(dim=-1) / lengths).detach().cpu().tolist()
+            except RuntimeError as e:
+                # On any ref model failure, skip this batch and leave zeros (or could set None)
+                print(f"KL batch exception: {e} — skipping these items.")
+                mean_kl = [0.0] * (end - start)
+            for i, val in enumerate(mean_kl):
+                flat_kls[start + i] = float(val)
+            # cleanup
+            del batch, comp_mask, pol_outputs, pol_logits, pol_logprobs, pol_probs
+            if 'ref_outputs' in locals():
+                del ref_outputs, ref_logits, ref_logprobs
+            del kl_pos, masked, lengths, mean_kl
+            torch.cuda.empty_cache()
+        # Unflatten
+        result: List[List[float]] = []
+        idx = 0
+        for n in sizes:
+            result.append(flat_kls[idx:idx + n])
+            idx += n
+        return result
+
+    def compute_explore_and_entropy_scores(
+        self,
+        questions: List[str],
+        candidates_by_q: List[List[str]],
+        batch_size: int,
+    ) -> Tuple[List[List[float]], List[List[float]]]:
+        """
+        Returns:
+            explore_scores: List[List[float]]  # 1 - softmax(logprob) per candidate
+            entropy_scores: List[List[float]]  # avg token entropy per candidate
+        Combines explore and entropy computations in one forward pass per batch.
+        """
+        self.model.eval()
+        # Flatten inputs
+        sizes: List[int] = []
+        flat_questions: List[str] = []
+        flat_candidates: List[str] = []
+        for qi, cands in enumerate(candidates_by_q):
+            sizes.append(len(cands))
+            for cand in cands:
+                flat_questions.append(questions[qi])
+                flat_candidates.append(cand)
+        total = len(flat_candidates)
+        if total == 0:
+            return [], []
+        # Prompts and lengths
+        templated_prompts = build_prompts(flat_questions, self.tokenizer)
+        prompt_lens = self._prompt_token_lengths(templated_prompts)
+        # Buffers
+        flat_logprobs: List[float] = [0.0] * total
+        flat_entropies: List[float] = [0.0] * total
+        # Batched loop
+        for start in range(0, total, batch_size):
+            end = min(start + batch_size, total)
+            batch_qs = flat_questions[start:end]
+            batch_cands = flat_candidates[start:end]
+            # tokenize
+            batch = self._concat_tokenize(batch_qs, batch_cands)
+            comp_mask = self._build_completion_mask(
+                batch["input_ids"], batch["attention_mask"], prompt_lens[start:end]
+            )
+            # forward once
+            with torch.no_grad():
+                outputs = self.model(
+                    input_ids=batch["input_ids"].to(self.model.device),
+                    attention_mask=batch["attention_mask"].to(self.model.device),
+                )
+                logits = outputs.logits  # (B,S,V)
+                # Shift for causal LM (align to labels)
+                logprobs = F.log_softmax(logits[:, :-1, :], dim=-1)  # (B,S-1,V)
+                labels = batch["input_ids"].to(self.model.device)[:, 1:]  # (B,S-1)
+                token_logprobs = torch.gather(
+                    logprobs, dim=-1, index=labels.unsqueeze(-1)
+                ).squeeze(-1)  # (B,S-1)
+                comp_mask_dev = comp_mask.to(self.model.device)
+                # sequence mean logprob over completion tokens
+                masked_lp = token_logprobs.masked_fill(~comp_mask_dev, 0.0)
+                lengths = comp_mask_dev.sum(dim=-1).clamp(min=1)
+                seq_lp = (masked_lp.sum(dim=-1) / lengths).detach().cpu().tolist()
+                # entropy per position: -sum p * log p
+                probs = logprobs.exp()
+                ent = -(probs * logprobs).sum(dim=-1)  # (B,S-1)
+                masked_ent = ent.masked_fill(~comp_mask_dev, 0.0)
+                avg_ent = (masked_ent.sum(dim=-1) / lengths).detach().cpu().tolist()
+            # store
+            for i in range(end - start):
+                flat_logprobs[start + i] = float(seq_lp[i])
+                flat_entropies[start + i] = float(avg_ent[i])
+            # cleanup
+            del batch, comp_mask, outputs, logits, logprobs, labels, token_logprobs, comp_mask_dev, masked_lp, lengths, seq_lp, probs, ent, masked_ent, avg_ent
+            torch.cuda.empty_cache()
+        # Per-question explore via softmax of logprobs
+        explore_scores: List[List[float]] = []
+        entropy_scores: List[List[float]] = []
+        offset = 0
+        for n in sizes:
+            group_lp = flat_logprobs[offset:offset + n]
+            group_ent = flat_entropies[offset:offset + n]
+            offset += n
+            if n == 0:
+                explore_scores.append([])
+                entropy_scores.append([])
+                continue
+            g_tensor = torch.tensor(group_lp, dtype=torch.float32)
+            probs = torch.softmax(g_tensor, dim=0).cpu().tolist()
+            explore = [float(1.0 - p) for p in probs]
+            explore_scores.append(explore)
+            entropy_scores.append(group_ent)
+        return explore_scores, entropy_scores
+
 def load_llm_trainer(model_name: str, gpu_id: int, num_steps: int, config: Optional[Dict[str, Any]] = None) -> LLMTrainer:
     return LLMTrainer(model_name, gpu_id, num_steps, config)

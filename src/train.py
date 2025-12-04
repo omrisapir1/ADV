@@ -54,7 +54,8 @@ def get_batch_records(dataset_obj, batch_size: int, step: int) -> List[Dict[str,
 LOG_DIR = "/workspace/ADV/src/data"  # central log directory path
 
 def log_questions(questions: List[str], gold_answers: List[str], candidates: List[List[str]], rm_scores: torch.Tensor,
-                  rm_scores_ref: torch.Tensor, correctness: List[List[int]], rm_avg_loss, llm_avg_loss, pass1):
+                  explore_scores: List[List[float]], entropy_scores: List[List[float]],
+                  correctness: List[List[int]], rm_avg_loss, llm_avg_loss, pass1):
     """Log training results to disk in JSON format.
 
     Ensures all tensor / non-serializable types are converted to native Python types.
@@ -78,7 +79,6 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
     for i, (question, gold_answer) in enumerate(zip(questions, gold_answers)):
         # Safely extract rm_scores for this question
         question_rm_scores: List[float] = []
-        question_rm_scores_ref: List[float] = []
         if i < len(rm_scores):
             row = rm_scores[i]
             # row could be a tensor of shape [num_candidates] or something iterable
@@ -93,22 +93,16 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
                         tmp.append(float(v.detach().cpu().item()))
                     else:
                         tmp.append(float(v))
+                tmp = [float(x) for x in tmp]
                 question_rm_scores = tmp
-        if i < len(rm_scores_ref):
-            row_ref = rm_scores_ref[i]
-            # row_ref could be a tensor of shape [num_candidates] or something iterable
-            if isinstance(row_ref, torch.Tensor):
-                # Flatten if needed then convert
-                question_rm_scores_ref = row_ref.detach().cpu().flatten().tolist()
-            else:
-                # Fallback: iterate and convert any tensor elements
-                tmp_ref = []
-                for v in row_ref:
-                    if isinstance(v, torch.Tensor):
-                        tmp_ref.append(float(v.detach().cpu().item()))
-                    else:
-                        tmp_ref.append(float(v))
-                question_rm_scores_ref = tmp_ref
+
+        # Safely extract explore and entropy scores for this question
+        question_explore_scores: List[float] = []
+        if i < len(explore_scores):
+            question_explore_scores = [float(x) for x in explore_scores[i]]
+        question_entropy_scores: List[float] = []
+        if i < len(entropy_scores):
+            question_entropy_scores = [float(x) for x in entropy_scores[i]]
 
         # Convert correctness list items to plain ints (0/1) / bools
         raw_corr = correctness[i] if i < len(correctness) else []
@@ -128,11 +122,13 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
             "gold_answer": gold_answer,
             "candidates": candidates[i] if i < len(candidates) else [],
             "rm_scores": question_rm_scores,
-            "rm_scores_ref": question_rm_scores_ref,
+            "explore_scores": question_explore_scores,
+            "entropy_scores": question_entropy_scores,
             "correctness": corr_list,
             "num_candidates": len(candidates[i]) if i < len(candidates) else 0,
             "avg_rm_score": float(sum(question_rm_scores) / len(question_rm_scores)) if question_rm_scores else 0.0,
-            "avg_rm_ref_score": float(sum(question_rm_scores_ref) / len(question_rm_scores_ref)) if question_rm_scores_ref else 0.0,
+            "avg_explore_score": float(sum(question_explore_scores) / len(question_explore_scores)) if question_explore_scores else 0.0,
+            "avg_entropy_score": float(sum(question_entropy_scores) / len(question_entropy_scores)) if question_entropy_scores else 0.0,
             "correct_count": correct_count,
             'rm_avg_loss': rm_avg_loss,
             'llm_avg_loss': llm_avg_loss,
@@ -190,18 +186,18 @@ def _normalize_per_question(scores_row: torch.Tensor, mode: str = "z") -> torch.
 def _select_triplet_for_llm(
     correct_ids,
     incorrect_ids,
-    s_trained_row: torch.Tensor,
-    s_ref_row: torch.Tensor,
+    row_rm_score: torch.Tensor,
+    row_explore_score: torch.Tensor,
     alpha: float,
     norm_mode: str = "z",
 ) -> tuple[int, int]:
     """Composite score S[j] = -alpha * norm(trained)[j] + (1 - alpha) * norm(ref)[j].
     Higher S => better positive selection; lower S => negative selection."""
-    t_norm = _normalize_per_question(s_trained_row, mode=norm_mode)
-    r_norm = _normalize_per_question(s_ref_row, mode=norm_mode)
-    S = -alpha * t_norm + (1.0 - alpha) * r_norm
+    rm_score_norm = _normalize_per_question(row_rm_score, mode=norm_mode)
+    explore_norm = _normalize_per_question(row_explore_score, mode=norm_mode)
+    S = alpha * row_explore_score + (1.0 - alpha) * rm_score_norm
     llm_pos_j = max(correct_ids, key=lambda j: float(S[j]))
-    llm_neg_j = min(incorrect_ids, key=lambda j: float(S[j]))
+    llm_neg_j = min(incorrect_ids, key=lambda j: float(explore_norm[j]))
     return llm_pos_j, llm_neg_j
 
 
@@ -210,6 +206,8 @@ def choose_pos_neg_triplets(
     candidates: List[List[str]],
     correctness: Any,  # can be List[List[int]] or torch.Tensor
     rm_scores: torch.Tensor,
+    explore_scores: List[List[float]],
+    alpha: float
 ) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str, str, str]]]:
     """Return triplets (question, pos_solution, neg_solution) selecting hardest pos (lowest score among correct)
     and hardest neg (highest score among incorrect) for each question with mixed correctness.
@@ -237,14 +235,16 @@ def choose_pos_neg_triplets(
         # ---- New LLM selection logic with per-question normalization ----
         K = len(cand_list)
         # Slice to actual candidate count for this question
-        row_trained = rm_scores[qi, :K]
+        row_rm_score = rm_scores[qi, :K]
+        # Convert explore_scores row to tensor for consistent indexing
+        row_explore_score = torch.tensor(explore_scores[qi][:K], dtype=torch.float32)
 
         llm_pos_j, llm_neg_j = _select_triplet_for_llm(
             correct_ids,
             incorrect_ids,
-            s_trained_row=row_trained,
-
-
+            row_rm_score=row_rm_score,
+            row_explore_score=row_explore_score,
+            alpha=alpha,
             norm_mode="z",
         )
 
@@ -361,6 +361,7 @@ async def training_loop(config: Dict[str, Any]):
     llm_trainer__gpu = config["hardware"].get("llm_trainer_gpu_id")
 
     llm_trainer_config = config.get("llm_trainer")
+    alpha = llm_trainer_config["alpha"]
     num_steps = config["train"]["num_steps"]
     batch_size = config["train"]["batch_size"]
     n_samples = config["train"]["n_samples_per_problem"]
@@ -467,8 +468,19 @@ async def training_loop(config: Dict[str, Any]):
             torch.cuda.empty_cache()
             rm_scores = rm_model.score_reference(questions_f, candidates_f, rm_config, forced_small_batch_size=True)
         print(f"[Step {step}] RM Scoring time: {time.time() - st:.2f}s")
+
+        st = time.time()
+        try:
+            explore_scores, entropy_scores = llm_trainer.compute_explore_and_entropy_scores(questions_f, candidates_f, 200)
+        except Exception as e:
+            print(f"[Step {step}] Exception during explore/entropy scoring: {e} will retry batch with 0.25 batch size.")
+            torch.cuda.empty_cache()
+            explore_scores, entropy_scores = llm_trainer.compute_explore_and_entropy_scores(questions_f, candidates_f, 50)
+        print(f"[Step {step}] Explore score time: {time.time() - st:.2f}s")
+
+
         torch.cuda.empty_cache()
-        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions_f, candidates_f, correctness_tensor, rm_scores)
+        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions_f, candidates_f, correctness_tensor, rm_scores, explore_scores, alpha)
         if not triplets_for_rm:
             continue
 
@@ -484,7 +496,7 @@ async def training_loop(config: Dict[str, Any]):
             print(f"[Step {step}] Exception during LLM training: {e} will skip")
             llm_avg_loss = 0.0
         print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
-        log_questions(questions_f, gold_answers_f, candidates_f, rm_scores, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1)
+        log_questions(questions_f, gold_answers_f, candidates_f, rm_scores, explore_scores, entropy_scores, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1)
         if last_swap_task is not None:
             await last_swap_task
         last_save_task = asyncio.create_task(_async_save_model(llm_trainer, tmp_weights_path))

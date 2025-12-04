@@ -59,6 +59,7 @@ train:
 
 
 llm_trainer:
+  alpha: 1.0
   update_ref_model_every: 1000
   weight_decay: 0.000
   dpo_beta: 0.1

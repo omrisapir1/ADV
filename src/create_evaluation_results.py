@@ -12,14 +12,14 @@ try:
     from .prompting import build_prompts
     from .answer_parse import compute_final_correctness
     from .generation import build_sglang_engine
-
+    from .generation_tree_sglang import build_tree_sglang_engine
 except ImportError:
     from prompting import build_prompts
     from answer_parse import compute_final_correctness
     from generation import build_sglang_engine
+    from generation_tree_sglang import build_tree_sglang_engine
 
 CONFIG_PATH = os.environ.get("ADV_CONFIG", "configs/config.yaml")
-
 
 @dataclass
 class EvalSettings:
@@ -43,7 +43,7 @@ def load_config(path: str) -> EvalSettings:
     a_field = dcfg.get("field_answer", "final_answer")
     split = 'test'
     n_samples = 124
-    batch_size = 2
+    batch_size = 16
     generation_cfg = cfg.get("generation")
     print(generation_cfg)
     return EvalSettings(
@@ -69,7 +69,7 @@ def load_testset(dataset_name: str, split: str):
     return ds[split]
 
 
-def select_records(ds, q_field: str, a_field: str, ):
+def select_records(ds, q_field: str, a_field: str,):
     total = len(ds)
     use_n = total
     use_n = min(use_n, total)
@@ -79,8 +79,7 @@ def select_records(ds, q_field: str, a_field: str, ):
     return questions, gold_answers
 
 
-async def generate_all(engine, tokenizer, questions: List[str], gold_answers: List[str], n_samples: int,
-                       generation_cfg: Dict[str, Any], batch_size: int):
+async def generate_all(engine, tokenizer, questions: List[str], gold_answers: List[str], n_samples: int, generation_cfg: Dict[str, Any], batch_size: int):
     out_rows: List[Dict[str, Any]] = []
     for start in range(0, len(questions), batch_size):
         end = min(start + batch_size, len(questions))
@@ -88,8 +87,6 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
         prompts = build_prompts(batch_q, tokenizer)
         raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_cfg)
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
-        entropies = [[c[2] for c in row] for row in raw_candidates]
-        selected_ps = [[c[3] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers[start:end])
         for i, q in enumerate(batch_q):
             row_candidates = candidate_texts[i]
@@ -97,13 +94,9 @@ async def generate_all(engine, tokenizer, questions: List[str], gold_answers: Li
             out_rows.append({
                 "question": q,
                 "gold_answer": gold_answers[start + i],
-                "selected_ps": selected_ps[i],
-                "entropies": entropies[i],
                 "candidates": row_candidates,
                 "correctness": row_correct,
             })
-        return out_rows
-
     return out_rows
 
 
@@ -112,13 +105,11 @@ async def run():
     print(f"Loaded config for model={settings.llm_name} dataset={settings.dataset_name} split={settings.split}")
     test_ds = load_testset(settings.dataset_name, settings.split)
     questions, gold_answers = select_records(test_ds, settings.q_field, settings.a_field)
-    print(
-        f"Evaluating {len(questions)} questions with {settings.n_samples} samples each (batch_size={settings.batch_size})")
+    print(f"Evaluating {len(questions)} questions with {settings.n_samples} samples each (batch_size={settings.batch_size})")
     tokenizer = AutoTokenizer.from_pretrained(settings.llm_name)
-    engine = build_sglang_engine(settings.llm_name, settings.generation_cfg)
+    engine = build_tree_sglang_engine(settings.llm_name, settings.generation_cfg)
     st = time.time()
-    rows = await generate_all(engine, tokenizer, questions, gold_answers, settings.n_samples, settings.generation_cfg,
-                              settings.batch_size)
+    rows = await generate_all(engine, tokenizer, questions, gold_answers, settings.n_samples, settings.generation_cfg, settings.batch_size)
     print(f"Generation time: {time.time() - st:.2f}s")
     df = pd.DataFrame(rows, columns=["question", "gold_answer", "candidates", "correctness"])
     df.to_pickle("evaluation_results.pkl")
@@ -126,4 +117,3 @@ async def run():
 
 if __name__ == "__main__":
     asyncio.run(run())
-
