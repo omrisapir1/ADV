@@ -239,6 +239,8 @@ class AceMathRewardModel:
         return r_pos, r_neg
 
     def save_model(self, path: str):
+        if not os.path.exists(path):
+            os.makedirs(path)
         torch.save(self.model.state_dict(), os.path.join(path, "reward_model.pt"))
 
     def load_model(self, path: str):
