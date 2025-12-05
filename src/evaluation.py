@@ -194,11 +194,21 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         }
 
     # Build padded tensors for AUC computations
-    max_k = max(len(row) for row in all_candidate_texts)
-    rm_scores = torch.empty(len(all_questions), max_k, dtype=torch.float32).fill_(float('nan'))
-    for i, scores_row in enumerate(rm_scores_rows):
+    # Guard against any potential mismatch between questions collected and rm score rows
+    num_rows = min(len(all_questions), len(rm_scores_rows))
+    max_k = max(len(row) for row in all_candidate_texts[:num_rows]) if num_rows > 0 else 0
+    rm_scores = torch.empty(num_rows, max_k, dtype=torch.float32).fill_(float('nan'))
+    for i in range(num_rows):
+        scores_row = rm_scores_rows[i]
         k = min(max_k, scores_row.shape[0])
         rm_scores[i, :k] = scores_row[:k]
+
+    # If there is an inconsistency, trim corresponding lists to match num_rows to keep downstream metrics aligned
+    if num_rows < len(all_questions):
+        all_questions = all_questions[:num_rows]
+        all_gold_answers = all_gold_answers[:num_rows]
+        all_candidate_texts = all_candidate_texts[:num_rows]
+        all_correctness = all_correctness[:num_rows]
 
     avg_acc = _per_question_accuracy(all_correctness)
     avg_auc = _average_auc(rm_scores, all_correctness)
@@ -234,7 +244,7 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         'avg_accuracy': avg_acc,
         'avg_auc': avg_auc,
         'percent_minus_one': amb_pct,
-        'pass1_only': sum(all_pass1) / len(all_pass1),
+        'pass1_only': sum(all_pass1) / len(all_pass1) if all_pass1 else 0.0,
     }
 
 

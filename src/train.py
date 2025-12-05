@@ -19,6 +19,7 @@ from .answer_parse import compute_final_correctness
 from .llm_trainer import load_llm_trainer
 from .optimizer import soft_reset_adam
 from .evaluation import run_full_evaluation  # added import
+from .alpha_control import AlphaControl  # moved to its own module
 
 import time
 import re
@@ -361,7 +362,7 @@ async def training_loop(config: Dict[str, Any]):
     llm_trainer__gpu = config["hardware"].get("llm_trainer_gpu_id")
 
     llm_trainer_config = config.get("llm_trainer")
-    alpha = llm_trainer_config["alpha"]
+
     num_steps = config["train"]["num_steps"]
     batch_size = config["train"]["batch_size"]
     n_samples = config["train"]["n_samples_per_problem"]
@@ -370,6 +371,10 @@ async def training_loop(config: Dict[str, Any]):
     evaluation_config = config.get("evaluation")
     tmp_weights_path = config.get("tmp_weights_safetensors_path")  # path with potential typo kept as-is
     url = f"http://localhost:30000/flush_cache"
+
+    # Initialize alpha control from config
+    alpha_ctrl_cfg = config.get("alpha_control", {})
+    alpha_control = AlphaControl(alpha_ctrl_cfg)
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
     train_ds, test_ds, q_field, a_field = load_dataset_handle(config)
@@ -464,7 +469,6 @@ async def training_loop(config: Dict[str, Any]):
 
 
 
-
         st = time.time()
         try:
             explore_scores, entropy_scores = llm_trainer.compute_explore_and_entropy_scores(questions_f, candidates_f, 5)
@@ -492,7 +496,7 @@ async def training_loop(config: Dict[str, Any]):
 
 
         torch.cuda.empty_cache()
-        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions_f, candidates_f, correctness_tensor, rm_scores, entropy_scores, alpha)
+        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions_f, candidates_f, correctness_tensor, rm_scores, entropy_scores, alpha_control.alpha)
         if not triplets_for_rm:
             continue
 
@@ -507,7 +511,7 @@ async def training_loop(config: Dict[str, Any]):
         except Exception as e:
             print(f"[Step {step}] Exception during LLM training: {e} will skip")
             llm_avg_loss = 0.0
-        print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f}")
+        print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f} alpha: {alpha_control.alpha:.4f}")
         log_questions(questions_f, gold_answers_f, candidates_f, rm_scores, explore_scores, entropy_scores, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1)
         if last_swap_task is not None:
             await last_swap_task

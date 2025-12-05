@@ -58,8 +58,18 @@ train:
   not_improve_steps_limit: 7
 
 
+alpha_control:
+  initial_alpha: 1
+  alpha_step: 0.05
+  avg_last_steps: 5
+  adjust_every: 10
+  correctness_improve_eps: 0.02
+  pass1_improve_eps: 0.01
+  entropy_change_eps: 0.03
+
+
+
 llm_trainer:
-  alpha: 1
   update_ref_model_every: 1000
   weight_decay: 0.000
   dpo_beta: 0.1
@@ -70,7 +80,7 @@ llm_trainer:
 #      warmup_steps: 10
 #      lr: 1e-6
     name: adamw
-    lr: 1e-5
+    lr: 2e-5
     weight_decay: 0.000
     eps: 1.0e-8
     betas:
