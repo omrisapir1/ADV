@@ -61,8 +61,8 @@ train:
 alpha_control:
   initial_alpha: 1
   alpha_step: 0.05
-  avg_last_steps: 5
-  adjust_every: 10
+  avg_last_steps: 2
+  adjust_every: 4
   correctness_improve_eps: 0.02
   pass1_improve_eps: 0.01
   entropy_change_eps: 0.03

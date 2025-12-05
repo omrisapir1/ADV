@@ -453,7 +453,8 @@ async def training_loop(config: Dict[str, Any]):
         candidate_texts = [[c[0] for c in row] for row in raw_candidates]
         candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers)
-        pass1 = [any([c==1 for c in row]) for row in correctness]
+        pass1_avg = [any([c==1 for c in row]) for row in correctness]
+
 
         # Filter invalid candidates and choose mixed correctness subset
         questions_f, gold_answers_f, candidates_f, correctness_filtered_list = filter_and_select_mixed(
@@ -512,6 +513,10 @@ async def training_loop(config: Dict[str, Any]):
             print(f"[Step {step}] Exception during LLM training: {e} will skip")
             llm_avg_loss = 0.0
         print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f} alpha: {alpha_control.alpha:.4f}")
+
+
+        alpha_control.step(np.mean(correctness_filtered_list), np.mean(pass1_avg), np.mean(entropy_scores), step)
+
         log_questions(questions_f, gold_answers_f, candidates_f, rm_scores, explore_scores, entropy_scores, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1)
         if last_swap_task is not None:
             await last_swap_task
