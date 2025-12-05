@@ -515,7 +515,7 @@ async def training_loop(config: Dict[str, Any]):
         print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f} alpha: {alpha_control.alpha:.4f}")
 
 
-        alpha_control.step(np.mean(correctness_filtered_list), np.mean(pass1_avg), np.mean(entropy_scores), step)
+        alpha_control.step(np.mean([np.mean(c) for c in correctness_filtered_list]), np.mean(pass1_avg), np.mean(entropy_scores), step)
 
         log_questions(questions_f, gold_answers_f, candidates_f, rm_scores, explore_scores, entropy_scores, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1)
         if last_swap_task is not None:
