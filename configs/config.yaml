@@ -82,6 +82,6 @@ tmp_weights_safetensors_path: /workspace/ADV/tmp_weights.safetenosrs
 
 evaluation:
   at_start: false
-  every_steps: 25
+  every_steps: 100
   n_samples_per_problem: 24
   sampling_batch_size: 48
