@@ -76,15 +76,30 @@ def select_candidates(entry: Dict[str, Any]) -> Dict[str, Any]:
         'lowest_1':lowest_1,
     }
 
-path ='/workspace/ADV/evaluation_logs/'
-res = []
-for cur_f in os.listdir(path):
-    if '.json' not in cur_f: continue
-    d = json.load(open(path + cur_f,'r'))
-    if d['mode'] == 'greedy':
-        res.append([d['accuracy'], d['percent_minus_one']])
-    else:
-        res[-1].extend([d['avg_accuracy'], d['avg_auc'], d['avg_auc_ref'], d['pass1_only']])
+# path ='/workspace/ADV/evaluation_logs/'
+# res = []
+# for cur_f in os.listdir(path):
+#     if '.json' not in cur_f: continue
+#     d = json.load(open(path + cur_f,'r'))
+#     if d['mode'] == 'greedy':
+#         res.append([d['accuracy'], d['percent_minus_one']])
+#     else:
+#         res[-1].extend([d['avg_accuracy'], d['avg_auc'], d['pass1_only']])
+#
+#
+# pd.DataFrame(res,columns=['greedy_accuracy','greedy_percent_minus_one','avg_accuracy','avg_auc','pass1_only'])
 
 
-pd.DataFrame(res,columns=['greedy_accuracy','greedy_percent_minus_one','avg_accuracy','avg_auc','avg_auc_ref','pass1_only'])
+best = None  # will hold (row_idx, item_idx, entropy)
+
+for row_idx, q in df['questions'].items():
+    ent = q['explore_scores']
+    corr = q['correctness']
+    for i, (e, c) in enumerate(zip(ent, corr)):
+        if c == 1 and (best is None or e > best[2]):
+            best = (row_idx, i, e)
+
+row_idx, item_idx, entropy_val = best
+
+print("Best tuple:", best)
+
