@@ -198,7 +198,7 @@ def _select_triplet_for_llm(
     explore_norm = _normalize_per_question(row_explore_score, mode=norm_mode)
     S = alpha * row_explore_score + (1.0 - alpha) * rm_score_norm
     llm_pos_j = max(correct_ids, key=lambda j: float(S[j]))
-    llm_neg_j = min(incorrect_ids, key=lambda j: float(explore_norm[j]))
+    llm_neg_j = min(incorrect_ids, key=lambda j: float(S[j]))
     return llm_pos_j, llm_neg_j
 
 
