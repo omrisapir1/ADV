@@ -56,16 +56,16 @@ class AlphaControl:
         print(f'last_pass1_avg: {self.last_pass1_avg}, pass1_avg: {pass1_avg}')
         print(f'last_entropy_avg: {self.last_entropy_avg}, entropy_avg: {entropy_avg}')
         if ((correctness_avg - self.last_correctness_avg) > self.correctness_improve_eps and
-                (pass1_avg - self.last_pass1_avg) > self.pass1_improve_eps) or (entropy_avg - self.last_entropy_avg < self.entropy_change_eps):
-            print('Alpha remains the same.')
-            pass
+                (pass1_avg - self.last_pass1_avg) > self.pass1_improve_eps):
+            print(f'Alpha remains the same - {self.alpha}')
         elif (entropy_avg - self.last_entropy_avg) > self.entropy_change_eps:
             print('Alpha decreased due to entropy increase.')
             self.alpha = max(0.0, self.alpha - self.alpha_step)
+            print(f'Adjusted alpha to {self.alpha}')
         else:
             print('Alpha increased due to lack of improvement.')
             self.alpha = min(1.0, self.alpha + self.alpha_step)
-        print(f'Adjusted alpha to {self.alpha}')
+            print(f'Adjusted alpha to {self.alpha}')
         # Update last averages
         self.last_correctness_avg = correctness_avg
         self.last_pass1_avg = pass1_avg
