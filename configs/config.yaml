@@ -59,7 +59,7 @@ train:
 
 
 alpha_control:
-  initial_alpha: 1
+  initial_alpha: 0.5
   alpha_step: 0.1
   avg_last_steps: 400
   adjust_every: 800
