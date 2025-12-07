@@ -199,7 +199,7 @@ class LLMTrainer:
         if hasattr(self.reference_model, "eval"):
             self.reference_model.eval()  # make sure ref is not building grads
 
-        beta = float(self.config.get("dpo_beta", 0.1))
+        beta = self.config["dpo_beta"]
         train_batch_size = int(self.config.get("batch_size", 1))
         max_grad_norm = float(self.config.get("max_grad_norm", 1.0))
         total_loss_val = 0.0
