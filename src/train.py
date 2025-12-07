@@ -257,6 +257,10 @@ def choose_pos_neg_triplets(
         triplets_for_llm.append((q, cand_list[llm_pos_j], cand_list[llm_neg_j]))
 
         if qi == 5:
+            print(f'Length of candidates: {len(cand_list)}')
+            print(f'Length of row_rm_score: {len(row_rm_score)}')
+            print(f'Length of row_explore_score: {len(row_explore_score)}')
+
             print(f'For question: {q}')
             print(f'The positive for LLM is: {cand_list[llm_pos_j]} with rm score {rm_scores_row[llm_pos_j]} and explore score {row_explore_score[llm_pos_j]}')
             print(f'The negative for LLM is: {cand_list[llm_neg_j]} with rm score {rm_scores_row[llm_neg_j]} and explore score {row_explore_score[llm_neg_j]}')
