@@ -217,8 +217,15 @@ class LLMTrainer:
             pos = [t[1] for t in batch]
             neg = [t[2] for t in batch]
 
+
             # ---- prompts via chat template (system+user), then lengths for masking ----
             templated_prompts = build_prompts(questions, self.tokenizer)
+            if start == 5:
+                print(f'DPO question: {templated_prompts[0]}')
+                print(f'DPO pos: {pos[0]}')
+                print(f'DPO nge: {neg[0]}')
+
+
             prompt_lens = self._prompt_token_lengths(templated_prompts)
 
             # ---- tokenize (prompt+completion) for pos/neg; uses same chat template internally ----

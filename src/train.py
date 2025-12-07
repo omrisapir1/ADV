@@ -255,6 +255,12 @@ def choose_pos_neg_triplets(
         rand_neg_j = random.choice(incorrect_ids)
         triplets_for_rm.append((q, cand_list[rand_pos_j], cand_list[rand_neg_j]))
         triplets_for_llm.append((q, cand_list[llm_pos_j], cand_list[llm_neg_j]))
+
+        if qi == 5:
+            print(f'For question: {q}')
+            print(f'The positive for LLM is: {cand_list[llm_pos_j]} with rm score {rm_scores_row[llm_pos_j]} and explore score {row_explore_score[llm_pos_j]}')
+            print(f'The negative for LLM is: {cand_list[llm_neg_j]} with rm score {rm_scores_row[llm_neg_j]} and explore score {row_explore_score[llm_neg_j]}')
+
     return triplets_for_rm, triplets_for_llm
 
 
