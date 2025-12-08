@@ -390,7 +390,7 @@ async def training_loop(config: Dict[str, Any]):
     checkpoint_every = int(resume_cfg.get("checkpoint_every", 0) or 0)
     llm_ckpt_path = resume_cfg.get("llm_path")
     rm_ckpt_path = resume_cfg.get("rm_path")
-    start_step = int(resume_cfg.get("at_step", 0) or 0)
+    start_step = int(resume_cfg.get("at_step", 0) or 0) if resume_enabled else 0
     alpha_state_path = os.path.join(llm_ckpt_path, "alpha_control.json") if llm_ckpt_path else None
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
