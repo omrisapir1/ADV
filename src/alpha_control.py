@@ -67,7 +67,7 @@ class AlphaControl:
         elif (entropy_avg - self.last_entropy_avg) > self.entropy_change_eps:
             print('Alpha decreased due to entropy increase.')
             if entropy_avg > self.alpha_explore_state or self.last_entropy_avg > self.alpha_explore_state:
-                alpha_step = int((entropy_avg - self.last_entropy_avg) *10) * self.alpha_step
+                alpha_step = int((entropy_avg - self.last_entropy_avg) *100) * self.alpha_step
                 alpha_step = min(alpha_step, self.max_alpha_step)
 
             else:

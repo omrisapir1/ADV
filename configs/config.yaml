@@ -102,7 +102,7 @@ evaluation:
 
 resume_training:
   checkpoint_every: 25
-  enabled: false
+  enabled: true
   llm_path: /workspace/ADV/llm_checkpoint
   rm_path: /workspace/ADV/rm_checkpoint
-  at_step: 5000
+  at_step: 200
