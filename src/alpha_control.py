@@ -1,4 +1,6 @@
 from typing import Dict, Any, List, Tuple
+import json
+import os
 
 class AlphaControl:
     """Encapsulates alpha scheduling parameters and simple tracking state.
@@ -21,6 +23,10 @@ class AlphaControl:
         self.correctness_improve_eps: float = float(cfg["correctness_improve_eps"])  # no .get
         self.pass1_improve_eps: float = float(cfg["pass1_improve_eps"])              # no .get
         self.entropy_change_eps: float = float(cfg["entropy_change_eps"])            # no .get
+        self.alpha_explore_state: float = float(cfg["alpha_explore_state"])  # no .get
+        self.max_alpha_step: float = float(cfg["max_alpha_step"])  # no .get
+
+
         # Runtime state (can be used later)
         self.alpha: float = self.initial_alpha
         self.correctness_history: List[float] = []
@@ -60,7 +66,16 @@ class AlphaControl:
             print(f'Alpha remains the same - {self.alpha}')
         elif (entropy_avg - self.last_entropy_avg) > self.entropy_change_eps:
             print('Alpha decreased due to entropy increase.')
-            self.alpha = max(0.0, self.alpha - self.alpha_step)
+            if entropy_avg > self.alpha_explore_state or self.last_entropy_avg > self.alpha_explore_state:
+                alpha_step = int((entropy_avg - self.last_entropy_avg) *10) * self.alpha_step
+                alpha_step = min(alpha_step, self.max_alpha_step)
+
+            else:
+                alpha_step = self.alpha_step
+
+
+            self.alpha = max(0.0, self.alpha - alpha_step)
+
             print(f'Adjusted alpha to {self.alpha}')
         else:
             print('Alpha increased due to lack of improvement.')
@@ -71,4 +86,36 @@ class AlphaControl:
         self.last_pass1_avg = pass1_avg
         self.last_entropy_avg = entropy_avg
 
+    # -------------------- Persistence helpers --------------------
+    def to_state(self) -> Dict[str, Any]:
+        """Serialize runtime state for checkpointing."""
+        return {
+            "alpha": self.alpha,
+            "correctness_history": self.correctness_history,
+            "pass1_history": self.pass1_history,
+            "entropy_history": self.entropy_history,
+            "last_correctness_avg": self.last_correctness_avg,
+            "last_pass1_avg": self.last_pass1_avg,
+            "last_entropy_avg": self.last_entropy_avg,
+        }
 
+    def save_state(self, path: str) -> None:
+        """Save runtime state to a JSON file at path."""
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.to_state(), f)
+
+    def load_state(self, path: str) -> None:
+        """Load runtime state from JSON file; silently ignore if missing."""
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return
+        self.alpha = float(data.get("alpha", self.initial_alpha))
+        self.correctness_history = list(data.get("correctness_history", []))
+        self.pass1_history = list(data.get("pass1_history", []))
+        self.entropy_history = list(data.get("entropy_history", []))
+        self.last_correctness_avg = float(data.get("last_correctness_avg", 0.0))
+        self.last_pass1_avg = float(data.get("last_pass1_avg", 0.0))
+        self.last_entropy_avg = float(data.get("last_entropy_avg", 0.0))

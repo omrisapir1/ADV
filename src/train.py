@@ -56,7 +56,7 @@ LOG_DIR = "/workspace/ADV/src/data"  # central log directory path
 
 def log_questions(questions: List[str], gold_answers: List[str], candidates: List[List[str]], rm_scores: torch.Tensor,
                   explore_scores: List[List[float]], entropy_scores: List[List[float]],
-                  correctness: List[List[int]], rm_avg_loss, llm_avg_loss, pass1):
+                  correctness: List[List[int]], rm_avg_loss, llm_avg_loss, pass1, alpha):
     """Log training results to disk in JSON format.
 
     Ensures all tensor / non-serializable types are converted to native Python types.
@@ -134,6 +134,7 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
             'rm_avg_loss': rm_avg_loss,
             'llm_avg_loss': llm_avg_loss,
             "pass1": pass1,
+            "alpha": alpha
         }
 
         # Skip serialization error printing; silently ignore failures
@@ -383,6 +384,15 @@ async def training_loop(config: Dict[str, Any]):
     alpha_ctrl_cfg = config.get("alpha_control", {})
     alpha_control = AlphaControl(alpha_ctrl_cfg)
 
+    # Resume/checkpoint config
+    resume_cfg = config.get("resume_training", {})
+    resume_enabled = bool(resume_cfg.get("enabled", False))
+    checkpoint_every = int(resume_cfg.get("checkpoint_every", 0) or 0)
+    llm_ckpt_path = resume_cfg.get("llm_path")
+    rm_ckpt_path = resume_cfg.get("rm_path")
+    start_step = int(resume_cfg.get("at_step", 0) or 0)
+    alpha_state_path = os.path.join(llm_ckpt_path, "alpha_control.json") if llm_ckpt_path else None
+
     tokenizer = AutoTokenizer.from_pretrained(llm_name)
     train_ds, test_ds, q_field, a_field = load_dataset_handle(config)
     engine = build_sglang_engine(llm_name, generation_config)
@@ -390,15 +400,29 @@ async def training_loop(config: Dict[str, Any]):
     rm_model = load_reward_model(rm_name, rm_gpu, rm_config, num_steps)
     llm_trainer = load_llm_trainer(llm_name, llm_trainer__gpu, num_steps, llm_trainer_config)
 
+    # If resuming, load checkpoints and hot-swap engine
+    if resume_enabled:
+        if llm_ckpt_path:
+            try:
+                llm_trainer.load_model(llm_ckpt_path)
+                await _async_hot_swap(engine, llm_ckpt_path)
+            except Exception as e:
+                print(f"[Resume] Failed loading LLM from {llm_ckpt_path}: {e}")
+        if rm_ckpt_path:
+            try:
+                rm_model.load_model(rm_ckpt_path)
+            except Exception as e:
+                print(f"[Resume] Failed loading RM from {rm_ckpt_path}: {e}")
+        if alpha_state_path:
+            alpha_control.load_state(alpha_state_path)
+
     ensure_empty_log_dir(LOG_DIR)
 
     last_save_task: Optional[asyncio.Task] = None  # async save task from previous iteration
     last_swap_task: Optional[asyncio.Task] = None
 
 
-    for step in range(num_steps):
-        if step % rm_save_every_steps == 0 :
-            rm_model.save_model(rm_save_path)
+    for step in range(start_step, num_steps):
         # LLM trainer reference refresh
         if evaluation_config and (step > 0 or evaluation_config['at_start']) and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
@@ -407,6 +431,24 @@ async def training_loop(config: Dict[str, Any]):
             print(f"[Eval@Step {step}] {json.dumps(eval_res, indent=2)}")
             await _async_flush_cache(url)
 
+        # Periodic checkpointing
+        if checkpoint_every and step % checkpoint_every == 0:
+            if llm_ckpt_path:
+                try:
+                    os.makedirs(llm_ckpt_path, exist_ok=True)
+                    # Save LLM trainer model
+                    await _async_save_model(llm_trainer, llm_ckpt_path)
+                    # Save alpha control state alongside LLM
+                    if alpha_state_path:
+                        alpha_control.save_state(alpha_state_path)
+                except Exception as e:
+                    print(f"[Checkpoint] Failed saving LLM/Alpha at step {step}: {e}")
+            if rm_ckpt_path:
+                try:
+                    os.makedirs(rm_ckpt_path, exist_ok=True)
+                    rm_model.save_model(rm_ckpt_path)
+                except Exception as e:
+                    print(f"[Checkpoint] Failed saving RM at step {step}: {e}")
 
         records = get_batch_records(train_ds, batch_size, step)
         questions = [r[q_field] for r in records]
@@ -525,7 +567,7 @@ async def training_loop(config: Dict[str, Any]):
 
         alpha_control.step(np.mean([np.mean(c) for c in correctness_filtered_list]), np.mean(pass1_avg), np.mean([np.mean(e) for e in entropy_scores]), step)
 
-        log_questions(questions_f, gold_answers_f, candidates_f, rm_scores, explore_scores, entropy_scores, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1_avg)
+        log_questions(questions_f, gold_answers_f, candidates_f, rm_scores, explore_scores, entropy_scores, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1_avg, alpha_control.alpha)
         if last_swap_task is not None:
             await last_swap_task
         last_save_task = asyncio.create_task(_async_save_model(llm_trainer, tmp_weights_path))
