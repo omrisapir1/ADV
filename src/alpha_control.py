@@ -65,17 +65,9 @@ class AlphaControl:
                 (pass1_avg - self.last_pass1_avg) > self.pass1_improve_eps):
             print(f'Alpha remains the same - {self.alpha}')
         elif (entropy_avg - self.last_entropy_avg) > self.entropy_change_eps:
-            print('Alpha decreased due to entropy increase.')
-            if entropy_avg > self.alpha_explore_state or self.last_entropy_avg > self.alpha_explore_state:
-                alpha_step = int((entropy_avg - self.last_entropy_avg) *100) * self.alpha_step
-                alpha_step = min(alpha_step, self.max_alpha_step)
-
-            else:
-                alpha_step = self.alpha_step
-
-
+            print('Alpha decreased due to entropy improvement.')
+            alpha_step = self.alpha_step
             self.alpha = max(0.0, self.alpha - alpha_step)
-
             print(f'Adjusted alpha to {self.alpha}')
         else:
             print('Alpha increased due to lack of improvement.')

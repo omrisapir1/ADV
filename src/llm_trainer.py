@@ -270,14 +270,14 @@ class LLMTrainer:
             (loss / 1.0).backward()  # If you want exact “once at the end” magnitude, use: (loss / num_total_batches)
             # We'll divide later after counting batches (see below).
             # clip & step ONCE
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
-            self.optimizer.step()
 
-            self.optimizer.zero_grad(set_to_none=True)
             del loss, pol_pos, pol_neg, ref_pos, ref_neg
             del batch_pos, batch_neg, comp_mask_pos, comp_mask_neg, templated_prompts, prompt_lens
             # NOTE: empty_cache() does not free reserved memory to the OS, but can reduce fragmentation
             torch.cuda.empty_cache()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
+        self.optimizer.step()
+        self.optimizer.zero_grad(set_to_none=True)
         self.scheduler.step()
         return total_loss_val / max(1, num_batches)
 
