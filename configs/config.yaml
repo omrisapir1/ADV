@@ -67,7 +67,6 @@ alpha_control:
   correctness_improve_eps: 0.02
   pass1_improve_eps: 0.01
   entropy_change_eps: 0.03
-  alpha_explore_state: 0.5
 
 
 
