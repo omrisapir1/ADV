@@ -23,7 +23,6 @@ class AlphaControl:
         self.correctness_improve_eps: float = float(cfg["correctness_improve_eps"])  # no .get
         self.pass1_improve_eps: float = float(cfg["pass1_improve_eps"])              # no .get
         self.entropy_change_eps: float = float(cfg["entropy_change_eps"])            # no .get
-        self.alpha_explore_state: float = float(cfg["alpha_explore_state"])  # no .get
         self.max_alpha_step: float = float(cfg["max_alpha_step"])  # no .get
 
 
