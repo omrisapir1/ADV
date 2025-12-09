@@ -90,16 +90,16 @@ def select_candidates(entry: Dict[str, Any]) -> Dict[str, Any]:
 # pd.DataFrame(res,columns=['greedy_accuracy','greedy_percent_minus_one','avg_accuracy','avg_auc','pass1_only'])
 
 
-best = None  # will hold (row_idx, item_idx, entropy)
-
-for row_idx, q in df['questions'].items():
-    ent = q['explore_scores']
-    corr = q['correctness']
-    for i, (e, c) in enumerate(zip(ent, corr)):
-        if c == 1 and (best is None or e > best[2]):
-            best = (row_idx, i, e)
-
-row_idx, item_idx, entropy_val = best
-
-print("Best tuple:", best)
+# best = None  # will hold (row_idx, item_idx, entropy)
+#
+# for row_idx, q in df['questions'].items():
+#     ent = q['explore_scores']
+#     corr = q['correctness']
+#     for i, (e, c) in enumerate(zip(ent, corr)):
+#         if c == 1 and (best is None or e > best[2]):
+#             best = (row_idx, i, e)
+#
+# row_idx, item_idx, entropy_val = best
+#
+# print("Best tuple:", best)
 
