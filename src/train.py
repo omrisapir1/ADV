@@ -214,7 +214,7 @@ def choose_pos_neg_triplets(
     rm_scores: torch.Tensor,
     explore_scores: List[List[float]],
     alpha: float
-) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str, str, str]], int]:
+) -> Tuple[List[Tuple[str, str, str]], List[Tuple[str, str, str]]]:
     """Return triplets (question, pos_solution, neg_solution) selecting hardest pos (lowest score among correct)
     and hardest neg (highest score among incorrect) for each question with mixed correctness.
     Accepts correctness as list-of-lists or padded tensor.
@@ -222,7 +222,6 @@ def choose_pos_neg_triplets(
     triplets_for_rm: List[Tuple[str, str, str]] = []
     triplets_for_llm: List[Tuple[str, str, str]] = []
     is_tensor = isinstance(correctness, torch.Tensor)
-    no_valid_pair = 0
     for qi, (q, cand_list) in enumerate(zip(questions, candidates)):
         if is_tensor:
             row_flags = [int(correctness[qi, j].item()) for j in range(len(cand_list))]
@@ -260,12 +259,10 @@ def choose_pos_neg_triplets(
         rand_pos_j = random.choice(correct_ids)
         rand_neg_j = random.choice(incorrect_ids)
         triplets_for_rm.append((q, cand_list[rand_pos_j], cand_list[rand_neg_j]))
-        if llm_pos_j:
-            triplets_for_llm.append((q, cand_list[llm_pos_j], cand_list[llm_neg_j]))
-        else:
-            no_valid_pair += 1
 
-    return triplets_for_rm, triplets_for_llm, no_valid_pair
+        triplets_for_llm.append((q, cand_list[llm_pos_j], cand_list[llm_neg_j]))
+
+    return triplets_for_rm, triplets_for_llm
 
 
 def ensure_empty_log_dir(path: str):
@@ -549,7 +546,7 @@ async def training_loop(config: Dict[str, Any]):
 
 
         torch.cuda.empty_cache()
-        triplets_for_rm, triplets_for_llm, no_valid_pair = choose_pos_neg_triplets(questions_f, candidates_f, correctness_tensor, rm_scores, entropy_scores, alpha_control.alpha)
+        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions_f, candidates_f, correctness_tensor, rm_scores, entropy_scores, alpha_control.alpha)
         if not triplets_for_llm:
             print(f"[Step {step}] No valid pairs found, skipping step.")
             continue
@@ -565,7 +562,7 @@ async def training_loop(config: Dict[str, Any]):
         except Exception as e:
             print(f"[Step {step}] Exception during LLM training: {e} will skip")
             llm_avg_loss = 0.0
-        print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f} alpha: {alpha_control.alpha:.4f} no valid pairs: {no_valid_pair / len(questions_f):.4f}")
+        print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f} alpha: {alpha_control.alpha:.4f}")
 
 
         alpha_control.step(np.mean([np.mean(c) for c in correctness_filtered_list]), np.mean(pass1_avg), np.mean([np.mean(e) for e in entropy_scores]), step)
