@@ -305,13 +305,16 @@ class LLMTrainer:
         batch_size: int,
     ) -> List[List[float]]:
         """
-        Compute mean per-token KL divergence KL(pol || ref) over completion tokens for each candidate.
-        Returns nested List[List[float]].
+        Compute reference surprisal over completion tokens for each candidate:
+        explore_score = - (1 / T_i) * sum_t log pi_ref(x_t | q)
+        Returns nested List[List[float]] aligned with candidates_by_q.
         """
-        self.model.eval()
+        # Put models in eval mode; we only use reference_model here
         if hasattr(self.reference_model, "eval"):
             self.reference_model.eval()
-        # Flatten
+        # ------------------------------
+        # Flatten inputs
+        # ------------------------------
         flat_questions: List[str] = []
         flat_candidates: List[str] = []
         sizes: List[int] = []
@@ -320,61 +323,64 @@ class LLMTrainer:
             for cand in cands:
                 flat_questions.append(questions[qi])
                 flat_candidates.append(cand)
+        # Early return if nothing to score
+        if len(flat_candidates) == 0:
+            return [[] for _ in sizes]
+        # Build prompts and prompt token lengths (for completion masking)
         templated_prompts = build_prompts(flat_questions, self.tokenizer)
         prompt_lens = self._prompt_token_lengths(templated_prompts)
-        flat_kls: List[float] = [0.0] * len(flat_candidates)
+        # Output buffer for explore scores (reference surprisal)
+        flat_scores: List[float] = [0.0] * len(flat_candidates)
+        # ------------------------------
+        # Batched loop
+        # ------------------------------
         for start in range(0, len(flat_candidates), batch_size):
             end = min(start + batch_size, len(flat_candidates))
             batch_qs = flat_questions[start:end]
             batch_cands = flat_candidates[start:end]
+            # Tokenize prompt+completion
             batch = self._concat_tokenize(batch_qs, batch_cands)
+            # Build completion mask (B, S-1)
             comp_mask = self._build_completion_mask(
                 batch["input_ids"], batch["attention_mask"], prompt_lens[start:end]
             )
             try:
                 with torch.no_grad():
-                    # policy logits
-                    pol_outputs = self.model(
-                        input_ids=batch["input_ids"].to(self.model.device),
-                        attention_mask=batch["attention_mask"].to(self.model.device),
-                    )
-                    pol_logits = pol_outputs.logits  # (B,S,V)
-                    pol_logprobs = F.log_softmax(pol_logits[:, :-1, :], dim=-1)  # (B,S-1,V)
-                    pol_probs = pol_logprobs.exp()  # (B,S-1,V)
-
-                    # reference logits
+                    # Reference forward only
                     ref_outputs = self.reference_model(
                         input_ids=batch["input_ids"].to(self.reference_model.device),
                         attention_mask=batch["attention_mask"].to(self.reference_model.device),
                     )
-                    ref_logits = ref_outputs.logits
-                    ref_logprobs = F.log_softmax(ref_logits[:, :-1, :], dim=-1)
-
-                    # KL per position: sum p_pol * (log p_pol - log p_ref)
-                    kl_pos = (pol_probs * (pol_logprobs - ref_logprobs.to(pol_probs.device))).sum(dim=-1)  # (B,S-1)
-
-                    # mask to completion tokens
-                    comp_mask_dev = comp_mask.to(pol_probs.device)
-                    masked = kl_pos.masked_fill(~comp_mask_dev, 0.0)
-                    lengths = comp_mask.sum(dim=-1).clamp(min=1).to(pol_probs.device)
-                    mean_kl = (masked.sum(dim=-1) / lengths).detach().cpu().tolist()
+                    ref_logits = ref_outputs.logits  # (B, S, V)
+                    # Shift for causal LM: use logits at positions [:, :-1, :]
+                    ref_logprobs = F.log_softmax(ref_logits[:, :-1, :], dim=-1)  # (B, S-1, V)
+                    labels = batch["input_ids"].to(self.reference_model.device)[:, 1:]  # (B, S-1)
+                    # Gather logprobs of actual generated tokens
+                    gathered = torch.gather(ref_logprobs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)  # (B, S-1)
+                    # Mask to completion tokens only and length-normalize
+                    comp_mask_dev = comp_mask.to(self.reference_model.device)
+                    masked = gathered.masked_fill(~comp_mask_dev, 0.0)
+                    lengths = comp_mask.sum(dim=-1).clamp(min=1).to(self.reference_model.device)
+                    mean_ref_logprob = (masked.sum(dim=-1) / lengths)  # (B,)
+                    explore_scores = (-mean_ref_logprob).detach().cpu().tolist()
             except RuntimeError as e:
-                # On any ref model failure, skip this batch and leave zeros (or could set None)
-                print(f"KL batch exception: {e} — skipping these items.")
-                mean_kl = [0.0] * (end - start)
-            for i, val in enumerate(mean_kl):
-                flat_kls[start + i] = float(val)
+                # On any ref model failure, skip this batch and leave zeros
+                print(f"Reference surprisal batch exception: {e} — skipping these items.")
+                explore_scores = [0.0] * (end - start)
+            # Store
+            for i, val in enumerate(explore_scores):
+                flat_scores[start + i] = float(val)
             # cleanup
-            del batch, comp_mask, pol_outputs, pol_logits, pol_logprobs, pol_probs
-            if 'ref_outputs' in locals():
-                del ref_outputs, ref_logits, ref_logprobs
-            del kl_pos, masked, lengths, mean_kl
+            del batch, comp_mask, ref_outputs, ref_logits, ref_logprobs, labels, gathered
+            del masked, lengths, mean_ref_logprob, explore_scores
             torch.cuda.empty_cache()
-        # Unflatten
+        # ------------------------------
+        # Unflatten back to per-question lists
+        # ------------------------------
         result: List[List[float]] = []
         idx = 0
         for n in sizes:
-            result.append(flat_kls[idx:idx + n])
+            result.append(flat_scores[idx:idx + n])
             idx += n
         return result
 
@@ -394,9 +400,6 @@ class LLMTrainer:
         """
         self.model.eval()
 
-        # ------------------------------
-        # 1) Flatten inputs
-        # ------------------------------
         sizes = []
         flat_questions = []
         flat_candidates = []
