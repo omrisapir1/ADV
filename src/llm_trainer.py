@@ -182,6 +182,19 @@ class LLMTrainer:
         logits = beta * ((pol_pos - pol_neg) - (ref_pos - ref_neg))
         return -F.logsigmoid(logits).mean()
 
+    def _ipo_loss(
+            self,
+            pol_pos: torch.Tensor,
+            pol_neg: torch.Tensor,
+            beta: float,
+    ) -> torch.Tensor:
+        """
+        IPO (reference-free preference loss):
+        L = -log sigmoid( beta * (pol_pos - pol_neg) )
+        """
+        logits = beta * (pol_pos - pol_neg)
+        return -F.logsigmoid(logits).mean()
+
 
     def train_step(self, triplets: List[Tuple[str, str, str]]) -> float:
         """
@@ -246,23 +259,25 @@ class LLMTrainer:
 
 
             # ---- forward passes (reference) - no grad ---
-            try:
-                with torch.no_grad():
-                    ref_pos = self._sequence_logprobs(
-                        self.reference_model, (batch_pos["input_ids"]).to(self.reference_model.device), (batch_pos["attention_mask"]).to(self.reference_model.device), comp_mask_pos.to(self.reference_model.device)
-                    ).to(self.device)
-                    ref_neg = self._sequence_logprobs(
-                        self.reference_model, (batch_neg["input_ids"]).to(self.reference_model.device), (batch_neg["attention_mask"]).to(self.reference_model.device), comp_mask_neg.to(self.reference_model.device)
-                    ).to(self.device)
-            except RuntimeError as e:
-                print(f"Reference model exception: {e} will skip this batch.")
-                torch.cuda.empty_cache()
-                continue
+            # try:
+            #     with torch.no_grad():
+            #         ref_pos = self._sequence_logprobs(
+            #             self.reference_model, (batch_pos["input_ids"]).to(self.reference_model.device), (batch_pos["attention_mask"]).to(self.reference_model.device), comp_mask_pos.to(self.reference_model.device)
+            #         ).to(self.device)
+            #         ref_neg = self._sequence_logprobs(
+            #             self.reference_model, (batch_neg["input_ids"]).to(self.reference_model.device), (batch_neg["attention_mask"]).to(self.reference_model.device), comp_mask_neg.to(self.reference_model.device)
+            #         ).to(self.device)
+            # except RuntimeError as e:
+            #     print(f"Reference model exception: {e} will skip this batch.")
+            #     torch.cuda.empty_cache()
+            #     continue
 
 
             # ---- DPO loss ----
             # scale by total number of mini-batches so total gradient matches one big batch
-            loss = self._dpo_loss(pol_pos, pol_neg, ref_pos, ref_neg, beta)
+            # loss = self._dpo_loss(pol_pos, pol_neg, ref_pos, ref_neg, beta)
+            loss = self._ipo_loss(pol_pos, pol_neg, beta)
+
             total_loss_val += float(loss.detach().cpu().item())
             num_batches += 1
 
@@ -271,7 +286,7 @@ class LLMTrainer:
             # We'll divide later after counting batches (see below).
             # clip & step ONCE
 
-            del loss, pol_pos, pol_neg, ref_pos, ref_neg
+            del loss, pol_pos, pol_neg
             del batch_pos, batch_neg, comp_mask_pos, comp_mask_neg, templated_prompts, prompt_lens
             # NOTE: empty_cache() does not free reserved memory to the OS, but can reduce fragmentation
             torch.cuda.empty_cache()
@@ -384,54 +399,57 @@ class LLMTrainer:
             idx += n
         return result
 
-    def compute_explore_and_entropy_scores(
+    def compute_avg_entropy(
             self,
             questions: List[str],
             candidates_by_q: List[List[str]],
             batch_size: int,
             top_k: int = 20,
-    ) -> Tuple[List[List[float]], List[List[float]]]:
+            sample_ratio: float = 0.05,
+    ) -> float:
         """
-        Computes:
-          explore_scores[q][i] = 1 - softmax(logprob_i across candidates)
-          entropy_scores[q][i] = mean(top-k entropy per completion token)
-
-        Uses top-k logits instead of full vocab to drastically reduce memory + latency.
+        Returns a single float: avg model token entropy over a random 5% sample of candidate solutions.
         """
         self.model.eval()
 
-        sizes = []
-        flat_questions = []
-        flat_candidates = []
+        # Flatten candidates same as before
+        flat_questions: List[str] = []
+        flat_candidates: List[str] = []
         for qi, cands in enumerate(candidates_by_q):
-            sizes.append(len(cands))
             for cand in cands:
                 flat_questions.append(questions[qi])
                 flat_candidates.append(self.clear_solution(cand))
 
         total = len(flat_candidates)
         if total == 0:
-            return [], []
+            return 0.0
+
+        # Sample indices: 5% uniform random sample, but at least 1 if any candidates exist
+        sample_size = max(1, int(total * sample_ratio))
+        sample_size = min(sample_size, total)
+        # Use torch for device-agnostic randomness, then move to CPU
+        perm = torch.randperm(total).tolist()
+        sampled_idx = perm[:sample_size]
+
+        # Build sampled lists
+        sampled_questions = [flat_questions[i] for i in sampled_idx]
+        sampled_candidates = [flat_candidates[i] for i in sampled_idx]
+        # Explicit cleanup of sampling buffers to reduce memory pressure
+        del perm, sampled_idx
 
         # Build prompts and get prompt lengths (to mask completions)
-        templated_prompts = build_prompts(flat_questions, self.tokenizer)
+        templated_prompts = build_prompts(sampled_questions, self.tokenizer)
         prompt_lens = self._prompt_token_lengths(templated_prompts)
 
         device = self.model.device
+        per_sample_avg_ent: List[float] = []
 
-        # Output buffers
-        flat_seqlogprob = [0.0] * total
-        flat_entropy = [0.0] * total
+        # Batched loop over sampled subset only
+        for start in range(0, len(sampled_candidates), batch_size):
+            end = min(start + batch_size, len(sampled_candidates))
 
-        # ------------------------------
-        # 2) Batched loop
-        # ------------------------------
-        for start in range(0, total, batch_size):
-            end = min(start + batch_size, total)
-            B = end - start
-
-            batch_qs = flat_questions[start:end]
-            batch_cands = flat_candidates[start:end]
+            batch_qs = sampled_questions[start:end]
+            batch_cands = sampled_candidates[start:end]
 
             batch = self._concat_tokenize(batch_qs, batch_cands)
             input_ids = batch["input_ids"].to(device)
@@ -443,78 +461,29 @@ class LLMTrainer:
             with torch.no_grad():
                 outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
                 logits = outputs.logits[:, :-1, :]  # (B, S-1, V)
-                labels = input_ids[:, 1:]  # (B, S-1)
 
-                # --------------------------------------
-                # 2A: Get logprobs for generated tokens
-                # --------------------------------------
-                # Instead of full softmax, gather only what we need
-                # This still requires logits for the token’s index but that is inexpensive.
-                logprobs_full = F.log_softmax(logits, dim=-1)
-
-                token_logprobs = torch.gather(
-                    logprobs_full, dim=-1, index=labels.unsqueeze(-1)
-                ).squeeze(-1)  # (B, S-1)
-
-                masked_lp = token_logprobs.masked_fill(~comp_mask, 0.0)
-                lengths = comp_mask.sum(dim=-1).clamp(min=1)
-                seq_lp_tensor = masked_lp.sum(dim=-1) / lengths  # (B,)
-
-                # --------------------------------------
-                # 2B: Compute top-k entropy (instead of full vocab entropy)
-                # --------------------------------------
-                # Extract top-k logits at each time step
+                # Top-k entropy per step
                 topk_vals, _ = torch.topk(logits, k=top_k, dim=-1)  # (B, S-1, k)
-
-                # Compute softmax over k tokens
-                topk_logprobs = F.log_softmax(topk_vals, dim=-1)  # (B, S-1, k)
+                topk_logprobs = F.log_softmax(topk_vals, dim=-1)    # (B, S-1, k)
                 topk_probs = torch.exp(topk_logprobs)
-
-                # entropy_t = -sum_i p_i * log p_i   but over top-k only
-                ent_t = -(topk_probs * topk_logprobs).sum(dim=-1)  # (B, S-1)
+                ent_t = -(topk_probs * topk_logprobs).sum(dim=-1)   # (B, S-1)
 
                 masked_ent = ent_t.masked_fill(~comp_mask, 0.0)
-                avg_ent_tensor = masked_ent.sum(dim=-1) / lengths  # (B,)
-
-                seq_lp_list = seq_lp_tensor.detach().cpu().tolist()
+                lengths = comp_mask.sum(dim=-1).clamp(min=1)        # (B,)
+                avg_ent_tensor = masked_ent.sum(dim=-1) / lengths   # (B,)
                 avg_ent_list = avg_ent_tensor.detach().cpu().tolist()
 
-            # Store
-            for i in range(B):
-                flat_seqlogprob[start + i] = float(seq_lp_list[i])
-                flat_entropy[start + i] = float(avg_ent_list[i])
+            per_sample_avg_ent.extend(float(x) for x in avg_ent_list)
 
             # cleanup
             del batch, input_ids, attention_mask, comp_mask
-            del outputs, logits, labels, logprobs_full, token_logprobs
-            del masked_lp, lengths, seq_lp_tensor
-            del topk_vals, topk_logprobs, topk_probs, ent_t, masked_ent, avg_ent_tensor
+            del outputs, logits, topk_vals, topk_logprobs, topk_probs, ent_t, masked_ent, lengths, avg_ent_tensor
         torch.cuda.empty_cache()
 
-        # ------------------------------
-        # 3) Per-question explore score
-        # ------------------------------
-        explore_scores = []
-        entropy_scores = []
-
-        offset = 0
-        for n in sizes:
-            if n == 0:
-                explore_scores.append([])
-                entropy_scores.append([])
-                continue
-
-            group_lp = flat_seqlogprob[offset:offset + n]
-            group_ent = flat_entropy[offset:offset + n]
-            offset += n
-
-            g_tensor = torch.tensor(group_lp, dtype=torch.float32)
-            probs = torch.softmax(g_tensor, dim=0).tolist()
-
-            explore_scores.append([1 - p for p in probs])
-            entropy_scores.append(group_ent)
-
-        return explore_scores, entropy_scores
+        # Final average over sampled candidates
+        if len(per_sample_avg_ent) == 0:
+            return 0.0
+        return float(sum(per_sample_avg_ent) / len(per_sample_avg_ent))
 
     @staticmethod
     def clear_solution(full_solution: str) -> str:

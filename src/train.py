@@ -415,7 +415,7 @@ async def training_loop(config: Dict[str, Any]):
                 print(f"[Resume] Failed loading RM from {rm_ckpt_path}: {e}")
         if alpha_state_path:
             alpha_control.load_state(alpha_state_path)
-            alpha_control.alpha = 0.6
+
 
 
     ensure_empty_log_dir(LOG_DIR)
@@ -523,11 +523,11 @@ async def training_loop(config: Dict[str, Any]):
 
         st = time.time()
         try:
-            explore_scores, entropy_scores = llm_trainer.compute_explore_and_entropy_scores(questions_f, candidates_f, 5)
+            entropy_avg = llm_trainer.compute_avg_entropy(questions_f, candidates_f, 5)
         except Exception as e:
             print(f"[Step {step}] Exception during explore/entropy scoring: {e} will retry batch with 0.25 batch size.")
             torch.cuda.empty_cache()
-            explore_scores, entropy_scores = llm_trainer.compute_explore_and_entropy_scores(questions_f, candidates_f, 12)
+            entropy_avg = llm_trainer.compute_avg_entropy(questions_f, candidates_f, 12)
         print(f"[Step {step}] Explore score time: {time.time() - st:.2f}s")
 
 
