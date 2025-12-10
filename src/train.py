@@ -574,7 +574,7 @@ async def training_loop(config: Dict[str, Any]):
 
         alpha_control.step(np.mean([np.mean(c) for c in correctness_filtered_list]), np.mean(pass1_avg), entropy_avg, step)
 
-        log_questions(questions_f, gold_answers_f, candidates_f, rm_scores, np.mean([np.mean(c) for c in kl_scores]), entropy_avg, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1_avg, alpha_control.alpha)
+        log_questions(questions_f, gold_answers_f, candidates_f, rm_scores, kl_scores, entropy_avg, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1_avg, alpha_control.alpha)
         if last_swap_task is not None:
             await last_swap_task
         last_save_task = asyncio.create_task(_async_save_model(llm_trainer, tmp_weights_path))
