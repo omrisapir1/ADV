@@ -55,7 +55,7 @@ def get_batch_records(dataset_obj, batch_size: int, step: int) -> List[Dict[str,
 LOG_DIR = "/workspace/ADV/src/data"  # central log directory path
 
 def log_questions(questions: List[str], gold_answers: List[str], candidates: List[List[str]], rm_scores: torch.Tensor,
-                  explore_scores: List[List[float]], entropy_scores: List[List[float]],
+                  kl_scores: List[List[float]], entropy_avg_score: float,
                   correctness: List[List[int]], rm_avg_loss, llm_avg_loss, pass1, alpha):
     """Log training results to disk in JSON format.
 
@@ -97,13 +97,10 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
                 tmp = [float(x) for x in tmp]
                 question_rm_scores = tmp
 
-        # Safely extract explore and entropy scores for this question
-        question_explore_scores: List[float] = []
-        if i < len(explore_scores):
-            question_explore_scores = [float(x) for x in explore_scores[i]]
-        question_entropy_scores: List[float] = []
-        if i < len(entropy_scores):
-            question_entropy_scores = [float(x) for x in entropy_scores[i]]
+
+        kl_scores_scores: List[float] = []
+        if i < len(kl_scores):
+            kl_scores_scores = [float(x) for x in kl_scores[i]]
 
         # Convert correctness list items to plain ints (0/1) / bools
         raw_corr = correctness[i] if i < len(correctness) else []
@@ -123,13 +120,11 @@ def log_questions(questions: List[str], gold_answers: List[str], candidates: Lis
             "gold_answer": gold_answer,
             "candidates": candidates[i] if i < len(candidates) else [],
             "rm_scores": question_rm_scores,
-            "explore_scores": question_explore_scores,
-            "entropy_scores": question_entropy_scores,
+            "kl_scores_scores": kl_scores_scores,
             "correctness": corr_list,
             "num_candidates": len(candidates[i]) if i < len(candidates) else 0,
             "avg_rm_score": float(sum(question_rm_scores) / len(question_rm_scores)) if question_rm_scores else 0.0,
-            "avg_explore_score": float(sum(question_explore_scores) / len(question_explore_scores)) if question_explore_scores else 0.0,
-            "avg_entropy_score": float(sum(question_entropy_scores) / len(question_entropy_scores)) if question_entropy_scores else 0.0,
+            "avg_entropy_score": entropy_avg_score,
             "correct_count": correct_count,
             'rm_avg_loss': rm_avg_loss,
             'llm_avg_loss': llm_avg_loss,
@@ -198,9 +193,10 @@ def _select_triplet_for_llm(
     rm_score_norm = _normalize_per_question(row_rm_score, mode=norm_mode)
     explore_norm = _normalize_per_question(row_explore_score, mode=norm_mode)
     S = alpha * explore_norm + (1.0 - alpha) * rm_score_norm
-    S_neg = alpha * explore_norm - (1.0 - alpha) * rm_score_norm
+
     llm_pos_j = max(correct_ids, key=lambda j: float(S[j]))
-    llm_neg_j = min(incorrect_ids, key=lambda j: float(S_neg[j]))
+
+    llm_neg_j = min(incorrect_ids, key=lambda j: float(explore_norm[j]))
     return llm_pos_j, llm_neg_j
     # llm_neg_j = min(incorrect_ids, key=lambda j: float(S[j]))
     # if S[llm_pos_j] <= S[llm_neg_j]:
@@ -528,7 +524,16 @@ async def training_loop(config: Dict[str, Any]):
             print(f"[Step {step}] Exception during explore/entropy scoring: {e} will retry batch with 0.25 batch size.")
             torch.cuda.empty_cache()
             entropy_avg = llm_trainer.compute_avg_entropy(questions_f, candidates_f, 12)
-        print(f"[Step {step}] Explore score time: {time.time() - st:.2f}s")
+        print(f"[Step {step}] Entropy calculation: {time.time() - st:.2f}s")
+
+        st = time.time()
+        try:
+            kl_scores = llm_trainer.compute_kl_scores(questions_f, candidates_f, 5)
+        except Exception as e:
+            print(f"[Step {step}] Exception during explore/KL scoring: {e} will retry batch with 0.25 batch size.")
+            torch.cuda.empty_cache()
+            kl_scores = llm_trainer.compute_kl_scores(questions_f, candidates_f, 12)
+        print(f"[Step {step}] KL calculation: {time.time() - st:.2f}s")
 
 
 
@@ -548,7 +553,7 @@ async def training_loop(config: Dict[str, Any]):
 
 
         torch.cuda.empty_cache()
-        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions_f, candidates_f, correctness_tensor, rm_scores, entropy_scores, alpha_control.alpha)
+        triplets_for_rm, triplets_for_llm = choose_pos_neg_triplets(questions_f, candidates_f, correctness_tensor, rm_scores, kl_scores, alpha_control.alpha)
         if not triplets_for_llm:
             print(f"[Step {step}] No valid pairs found, skipping step.")
             continue
@@ -567,9 +572,9 @@ async def training_loop(config: Dict[str, Any]):
         print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f} alpha: {alpha_control.alpha:.4f}")
 
 
-        alpha_control.step(np.mean([np.mean(c) for c in correctness_filtered_list]), np.mean(pass1_avg), np.mean([np.mean(e) for e in entropy_scores]), step)
+        alpha_control.step(np.mean([np.mean(c) for c in correctness_filtered_list]), np.mean(pass1_avg), entropy_avg, step)
 
-        log_questions(questions_f, gold_answers_f, candidates_f, rm_scores, explore_scores, entropy_scores, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1_avg, alpha_control.alpha)
+        log_questions(questions_f, gold_answers_f, candidates_f, rm_scores, np.mean([np.mean(c) for c in kl_scores]), entropy_avg, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1_avg, alpha_control.alpha)
         if last_swap_task is not None:
             await last_swap_task
         last_save_task = asyncio.create_task(_async_save_model(llm_trainer, tmp_weights_path))
