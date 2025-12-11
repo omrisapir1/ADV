@@ -3,7 +3,7 @@ from fractions import Fraction
 from math import isclose
 from typing import Union, Optional, List
 
-from constants import THINK_STOP
+from .constants import THINK_STOP
 
 _COMMA = re.compile(",")
 _PCT_END = re.compile(r"(?:\\?%)\s*$")
