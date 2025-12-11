@@ -192,11 +192,13 @@ def _select_triplet_for_llm(
     Higher S => better positive selection; lower S => negative selection."""
     rm_score_norm = _normalize_per_question(row_rm_score, mode=norm_mode)
     explore_norm = _normalize_per_question(row_explore_score, mode=norm_mode)
+    rand_norm = np.random.permutation(explore_norm)
     S = alpha * explore_norm + (1.0 - alpha) * rm_score_norm
+    S_neg = alpha * explore_norm + (1.0 - alpha) * rand_norm
 
     llm_pos_j = max(correct_ids, key=lambda j: float(S[j]))
 
-    llm_neg_j = min(incorrect_ids, key=lambda j: float(explore_norm[j]))
+    llm_neg_j = min(incorrect_ids, key=lambda j: float(S_neg[j]))
     return llm_pos_j, llm_neg_j
     # llm_neg_j = min(incorrect_ids, key=lambda j: float(S[j]))
     # if S[llm_pos_j] <= S[llm_neg_j]:

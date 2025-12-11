@@ -97,4 +97,4 @@ resume_training:
   enabled: true
   llm_path: /workspace/ADV/llm_checkpoint
   rm_path: /workspace/ADV/rm_checkpoint
-  at_step: 75
+  at_step: 50
