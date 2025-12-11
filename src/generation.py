@@ -89,7 +89,6 @@ class AsyncSGLangEngineWrapper:
         top_k: int,
         repetition_penalty: float,
         max_new_tokens: int,
-        stop: Optional[List[str]],
     ) -> List[str]:
         """Single-phase sampling for one prompt. Returns list of generated strings.
         If generation fails, returns n_samples empty strings.
@@ -102,7 +101,6 @@ class AsyncSGLangEngineWrapper:
             temperature=temperature,
             top_p=top_p,
             max_tokens=max_new_tokens,
-            stop=stop if stop else None,
             extra_body=payload_extra,
         )
         choices = getattr(resp, "choices", []) or []
