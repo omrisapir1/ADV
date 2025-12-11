@@ -74,18 +74,17 @@ def filter_and_select_mixed(
     questions: List[str],
     gold_answers: List[str],
     candidate_texts: List[List[str]],
-    candidate_valid_flags: List[List[int]],
     correctness: List[List[int]],
 ) -> Tuple[List[str], List[str], List[List[str]], List[List[int]]]:
     """Replicated from train.py. Remove invalid-but-correct candidates and retain only questions
     that have mixed correctness (contain both 0 and 1). Returns filtered sets or empty lists if none remain."""
     filtered_candidate_texts: List[List[str]] = []
     filtered_correctness: List[List[int]] = []
-    for texts_row, flags_row, corr_row in zip(candidate_texts, candidate_valid_flags, correctness):
+    for texts_row, corr_row in zip(candidate_texts, correctness):
         new_texts: List[str] = []
         new_corr: List[int] = []
-        for t, f, corr in zip(texts_row, flags_row, corr_row):
-            if corr == -1 or (f == 0 and corr == 1):
+        for t, f, corr in zip(texts_row, corr_row):
+            if corr == -1:
                 continue
             new_texts.append(t)
             new_corr.append(corr)
