@@ -75,7 +75,7 @@ llm_trainer:
 #      warmup_steps: 10
 #      lr: 1e-6
     name: adamw
-    lr: 2e-5
+    lr: 1e-5
     weight_decay: 0.000
     eps: 1.0e-8
     betas:
@@ -94,7 +94,7 @@ evaluation:
 
 resume_training:
   checkpoint_every: 25
-  enabled: false
+  enabled: true
   llm_path: /workspace/ADV/llm_checkpoint
   rm_path: /workspace/ADV/rm_checkpoint
-  at_step: 50
+  at_step: 75
