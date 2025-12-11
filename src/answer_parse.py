@@ -8,6 +8,7 @@ from .constants import THINK_STOP
 _COMMA = re.compile(",")
 _PCT_END = re.compile(r"(?:\\?%)\s*$")
 _UNICODE_MINUS = "\u2212"
+THINK_TO_FAR_CHARS = 500
 
 def _parse_digits(s: str) -> Optional[float]:
     if not s:
@@ -48,7 +49,11 @@ def extract_final_answer(llm_output: str) -> tuple[str, bool]:
     if matches:
         last_match = matches[-1]
         start_idx = last_match.start()
-        return last_match.group(1).strip(),  'boxed' in llm_output[start_idx+5:].lower() or last_think_end > start_idx or last_think_end == -1
+        can_only_be_zero = ('boxed' in llm_output[start_idx+5:].lower() or
+                 last_think_end > start_idx or
+                 last_think_end == -1 or
+                 (start_idx - last_think_end) > THINK_TO_FAR_CHARS )
+        return last_match.group(1).strip(),  can_only_be_zero
     lines = [ln.strip() for ln in (llm_output or "").splitlines() if ln.strip()]
     return lines[-1] if lines else None, last_think_end == -1
 
