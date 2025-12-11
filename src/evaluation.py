@@ -83,7 +83,7 @@ def filter_and_select_mixed(
     for texts_row, corr_row in zip(candidate_texts, correctness):
         new_texts: List[str] = []
         new_corr: List[int] = []
-        for t, f, corr in zip(texts_row, corr_row):
+        for t, corr in zip(texts_row, corr_row):
             if corr == -1:
                 continue
             new_texts.append(t)
