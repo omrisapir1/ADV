@@ -114,13 +114,12 @@ async def evaluate_greedy(engine, test_ds, q_field: str, a_field: str, tokenizer
     prompts = build_prompts(questions, tokenizer)
     greedy_cfg = dict(generation_config)
     # Override for greedy decoding
-    greedy_cfg['think_temperature'] = 0.0
-    greedy_cfg['think_top_p'] = 1.0
-    greedy_cfg['think_top_k'] = 1
-    greedy_cfg['think_repetition_penalty'] = 1.0
+    greedy_cfg['temperature'] = 0.0
+    greedy_cfg['top_p'] = 1.0
+    greedy_cfg['top_k'] = 1
+    greedy_cfg['repetition_penalty'] = 1.0
 
-    raw_candidates = await engine.generate_candidates(prompts, n_samples=1, **greedy_cfg)
-    candidate_texts = [[c[0] for c in row] for row in raw_candidates]
+    candidate_texts = await engine.generate_candidates(prompts, n_samples=1, **greedy_cfg)
     correctness = compute_final_correctness(candidate_texts, gold_answers)
     acc = _per_question_accuracy(correctness)
     amb_pct = _percent_ambiguous(correctness)
@@ -152,15 +151,14 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         batch_questions = [test_ds[i][q_field] for i in range(start, end)]
         batch_gold = [test_ds[i][a_field] for i in range(start, end)]
         prompts = build_prompts(batch_questions, tokenizer)
-        raw_candidates = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
-        batch_candidate_texts = [[c[0] for c in row] for row in raw_candidates]
-        batch_valid_flags = [[c[1] for c in row] for row in raw_candidates]
+        batch_candidate_texts = await engine.generate_candidates(prompts, n_samples=n_samples, **generation_config)
+
         batch_correctness = compute_final_correctness(batch_candidate_texts, batch_gold)
         batch_pass1 = [any(c == 1 for c in cs) for cs in batch_correctness]
 
         # Apply filtering + mixed selection (new)
         batch_questions_f, batch_gold_f, batch_candidate_texts_f, batch_correctness_f = filter_and_select_mixed(
-            batch_questions, batch_gold, batch_candidate_texts, batch_valid_flags, batch_correctness
+            batch_questions, batch_gold, batch_candidate_texts, batch_correctness
         )
         # Reward scoring on filtered batch
         try:
@@ -179,7 +177,8 @@ async def evaluate_sampling(engine, rm_model, test_ds, q_field: str, a_field: st
         all_pass1.extend(batch_pass1)
         rm_scores_rows.extend([row.detach().cpu() for row in batch_rm_scores_model])
 
-        del raw_candidates, batch_candidate_texts, batch_valid_flags, batch_rm_scores_model
+        del batch_rm_scores_model
+        torch.cuda.empty_cache()
 
     if not all_questions:
         # Return empty-style result if no mixed questions found at all

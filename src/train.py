@@ -283,7 +283,6 @@ def filter_and_select_mixed(
     questions: List[str],
     gold_answers: List[str],
     candidate_texts: List[List[str]],
-    candidate_valid_flags: List[List[int]],
     correctness: List[List[int]],
 ) -> Tuple[List[str], List[str], List[List[str]], List[List[int]]]:
     """Filter candidates removing invalid-but-correct items and select only questions
@@ -292,11 +291,11 @@ def filter_and_select_mixed(
     """
     filtered_candidate_texts: List[List[str]] = []
     filtered_correctness: List[List[int]] = []
-    for texts_row, flags_row, corr_row in zip(candidate_texts, candidate_valid_flags, correctness):
+    for texts_row, corr_row in zip(candidate_texts, correctness):
         new_texts: List[str] = []
         new_corr: List[int] = []
-        for t, f, corr in zip(texts_row, flags_row, corr_row):
-            if corr == -1 or (f == 0 and corr == 1):
+        for t, f, corr in zip(texts_row, corr_row):
+            if corr == -1:
                 continue
             new_texts.append(t)
             new_corr.append(corr)
@@ -459,7 +458,7 @@ async def training_loop(config: Dict[str, Any]):
         raw_candidates = None
         for attempt in range(2):  # attempt 0 + retry 1
             try:
-                raw_candidates = await asyncio.wait_for(
+                candidate_texts = await asyncio.wait_for(
                     engine.generate_candidates(prompts, n_samples=n_samples, **generation_config),
                     timeout=timeout_seconds,
                 )
@@ -479,9 +478,9 @@ async def training_loop(config: Dict[str, Any]):
                 torch.cuda.empty_cache()
                 await _async_flush_cache(url)
                 engine = build_sglang_engine(llm_name, generation_config)
-            if raw_candidates is None and attempt == 1:
+            if candidate_texts is None and attempt == 1:
                 continue  # will hit loop 'continue' below
-        if raw_candidates is None:
+        if candidate_texts is None:
             continue
         print(f"[Step {step}] Generation time: {time.time() - st:.2f}s")
         # Engine metrics logging
@@ -497,15 +496,13 @@ async def training_loop(config: Dict[str, Any]):
             last_save_task = None
             last_swap_task = asyncio.create_task(_async_hot_swap(engine, tmp_weights_path))
 
-        candidate_texts = [[c[0] for c in row] for row in raw_candidates]
-        candidate_valid_flags = [[c[1] for c in row] for row in raw_candidates]
         correctness = compute_final_correctness(candidate_texts, gold_answers)
         pass1_avg = [any([c==1 for c in row]) for row in correctness]
 
 
         # Filter invalid candidates and choose mixed correctness subset
         questions_f, gold_answers_f, candidates_f, correctness_filtered_list = filter_and_select_mixed(
-            questions, gold_answers, candidate_texts, candidate_valid_flags, correctness
+            questions, gold_answers, candidate_texts, correctness
         )
         if not questions_f:
             continue
