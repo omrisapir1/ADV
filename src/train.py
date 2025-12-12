@@ -398,15 +398,18 @@ async def training_loop(config: Dict[str, Any]):
 
     # If resuming, load checkpoints and hot-swap engine
     if resume_enabled:
+        # TODO load optimizer state as well
         if llm_ckpt_path:
             try:
-                llm_trainer.load_model(llm_ckpt_path)
+                # load full trainer state (model + optimizer + scheduler)
+                llm_trainer.load_state(llm_ckpt_path)
                 await _async_hot_swap(engine, llm_ckpt_path)
             except Exception as e:
                 print(f"[Resume] Failed loading LLM from {llm_ckpt_path}: {e}")
         if rm_ckpt_path:
             try:
-                rm_model.load_model(rm_ckpt_path)
+                # load full reward model state
+                rm_model.load_state(rm_ckpt_path)
             except Exception as e:
                 print(f"[Resume] Failed loading RM from {rm_ckpt_path}: {e}")
         if alpha_state_path:
@@ -421,6 +424,8 @@ async def training_loop(config: Dict[str, Any]):
 
 
     for step in range(start_step, num_steps):
+        if step == 50:
+            alpha_control.alpha = 0.5
         # LLM trainer reference refresh
         if evaluation_config and (step > 0 or evaluation_config['at_start']) and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
@@ -431,11 +436,12 @@ async def training_loop(config: Dict[str, Any]):
 
         # Periodic checkpointing
         if checkpoint_every and step % checkpoint_every == 0:
+            # TODO save optimizer state as well
             if llm_ckpt_path:
                 try:
                     os.makedirs(llm_ckpt_path, exist_ok=True)
-                    # Save LLM trainer model
-                    await _async_save_model(llm_trainer, llm_ckpt_path)
+                    # Save LLM trainer model + optimizer/scheduler
+                    llm_trainer.save_state(llm_ckpt_path)
                     # Save alpha control state alongside LLM
                     if alpha_state_path:
                         alpha_control.save_state(alpha_state_path)
@@ -444,7 +450,8 @@ async def training_loop(config: Dict[str, Any]):
             if rm_ckpt_path:
                 try:
                     os.makedirs(rm_ckpt_path, exist_ok=True)
-                    rm_model.save_model(rm_ckpt_path)
+                    # Save RM model + optimizer/scheduler
+                    rm_model.save_state(rm_ckpt_path)
                 except Exception as e:
                     print(f"[Checkpoint] Failed saving RM at step {step}: {e}")
 

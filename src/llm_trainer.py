@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import os
 
 from .optimizer import create_optimizer, create_scheduler
 from .prompting import build_prompts
@@ -312,6 +313,35 @@ class LLMTrainer:
             attn_implementation="sdpa",
         ).to(self.device)
 
+    def save_state(self, path: str):
+        """Save model along with optimizer and scheduler states."""
+        # Save model weights (HF format)
+        self.save_model(path)
+        # Save optimizer/scheduler as a single checkpoint file
+        state = {
+            "optimizer": self.optimizer.state_dict() if self.optimizer is not None else None,
+            "scheduler": self.scheduler.state_dict() if self.scheduler is not None else None,
+            "config": self.config,
+        }
+        torch.save(state, os.path.join(path, "trainer_optim.pt"))
+
+    def load_state(self, path: str):
+        """Load model plus optimizer and scheduler states if present."""
+        # Load model from directory
+        self.load_model(path)
+        # Try load optimizer/scheduler
+        ckpt_path = os.path.join(path, "trainer_optim.pt")
+        if os.path.exists(ckpt_path):
+            state = torch.load(ckpt_path, map_location="cpu")
+            if self.optimizer is not None and state.get("optimizer") is not None:
+                self.optimizer.load_state_dict(state["optimizer"])
+            if self.scheduler is not None and state.get("scheduler") is not None:
+                self.scheduler.load_state_dict(state["scheduler"])
+        # Ensure reference model config matches pad token and device
+        if hasattr(self.reference_model, "eval"):
+            self.reference_model.eval()
+        # keep tokenizer padding side
+        return
 
     def compute_kl_scores(
         self,

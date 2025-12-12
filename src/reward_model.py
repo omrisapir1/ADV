@@ -83,6 +83,22 @@ class AceMathRewardModel:
             os.path.join(path, "reward_model.pt"),
         )
 
+    def load_state(self, path: str):
+        ckpt_path = os.path.join(path, "reward_model.pt")
+        if not os.path.exists(ckpt_path):
+            return
+        state = torch.load(ckpt_path, map_location="cpu")
+        # Restore model weights
+        if "model_state" in state:
+            self.model.load_state_dict(state["model_state"])
+        # Optimizer and scheduler may be None
+        if self.optimizer is not None and state.get("optimizer_state") is not None:
+            self.optimizer.load_state_dict(state["optimizer_state"])
+        if self.scheduler is not None and state.get("scheduler_state") is not None:
+            self.scheduler.load_state_dict(state["scheduler_state"])
+        self.model.to(self.device)
+        self.model.eval()
+        return
 
     def _chat(self, question: str, solution: str):
         msgs = [
