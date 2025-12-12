@@ -200,10 +200,6 @@ def _select_triplet_for_llm(
 
     llm_neg_j = min(incorrect_ids, key=lambda j: float(S_neg[j]))
     return llm_pos_j, llm_neg_j
-    # llm_neg_j = min(incorrect_ids, key=lambda j: float(S[j]))
-    # if S[llm_pos_j] <= S[llm_neg_j]:
-    #     return None, None
-    return llm_pos_j, llm_neg_j
 
 
 def choose_pos_neg_triplets(
@@ -402,12 +398,40 @@ async def training_loop(config: Dict[str, Any]):
         if llm_ckpt_path:
             try:
                 llm_trainer.load_model(llm_ckpt_path)
+                # Load optimizer/scheduler if present
+                optim_file = os.path.join(llm_ckpt_path, "llm_optimizer.pt")
+                sched_file = os.path.join(llm_ckpt_path, "llm_scheduler.pt")
+                if os.path.isfile(optim_file):
+                    state = torch.load(optim_file, map_location="cpu")
+                    try:
+                        llm_trainer.optimizer.load_state_dict(state)
+                    except Exception as e:
+                        print(f"[Resume] Failed loading LLM optimizer: {e}")
+                if os.path.isfile(sched_file):
+                    state = torch.load(sched_file, map_location="cpu")
+                    try:
+                        llm_trainer.scheduler.load_state_dict(state)
+                    except Exception as e:
+                        print(f"[Resume] Failed loading LLM scheduler: {e}")
                 await _async_hot_swap(engine, llm_ckpt_path)
             except Exception as e:
                 print(f"[Resume] Failed loading LLM from {llm_ckpt_path}: {e}")
         if rm_ckpt_path:
             try:
                 rm_model.load_model(rm_ckpt_path)
+                # Load RM optimizer/scheduler if present
+                rm_optim_file = os.path.join(rm_ckpt_path, "rm_optimizer.pt")
+                rm_sched_file = os.path.join(rm_ckpt_path, "rm_scheduler.pt")
+                if os.path.isfile(rm_optim_file) and getattr(rm_model, "optimizer", None) is not None:
+                    try:
+                        rm_model.optimizer.load_state_dict(torch.load(rm_optim_file, map_location="cpu"))
+                    except Exception as e:
+                        print(f"[Resume] Failed loading RM optimizer: {e}")
+                if os.path.isfile(rm_sched_file) and getattr(rm_model, "scheduler", None) is not None:
+                    try:
+                        rm_model.scheduler.load_state_dict(torch.load(rm_sched_file, map_location="cpu"))
+                    except Exception as e:
+                        print(f"[Resume] Failed loading RM scheduler: {e}")
             except Exception as e:
                 print(f"[Resume] Failed loading RM from {rm_ckpt_path}: {e}")
         if alpha_state_path:
@@ -422,6 +446,8 @@ async def training_loop(config: Dict[str, Any]):
 
 
     for step in range(start_step, num_steps):
+        if step == 50:
+            alpha_control.alpha = 0.5
         # LLM trainer reference refresh
         if evaluation_config and (step > 0 or evaluation_config['at_start']) and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
@@ -432,11 +458,21 @@ async def training_loop(config: Dict[str, Any]):
 
         # Periodic checkpointing
         if checkpoint_every and step % checkpoint_every == 0:
+
             if llm_ckpt_path:
                 try:
                     os.makedirs(llm_ckpt_path, exist_ok=True)
                     # Save LLM trainer model
                     await _async_save_model(llm_trainer, llm_ckpt_path)
+                    # Save optimizer/scheduler states
+                    try:
+                        torch.save(llm_trainer.optimizer.state_dict(), os.path.join(llm_ckpt_path, "llm_optimizer.pt"))
+                    except Exception as e:
+                        print(f"[Checkpoint] Failed saving LLM optimizer: {e}")
+                    try:
+                        torch.save(llm_trainer.scheduler.state_dict(), os.path.join(llm_ckpt_path, "llm_scheduler.pt"))
+                    except Exception as e:
+                        print(f"[Checkpoint] Failed saving LLM scheduler: {e}")
                     # Save alpha control state alongside LLM
                     if alpha_state_path:
                         alpha_control.save_state(alpha_state_path)
@@ -446,6 +482,17 @@ async def training_loop(config: Dict[str, Any]):
                 try:
                     os.makedirs(rm_ckpt_path, exist_ok=True)
                     rm_model.save_model(rm_ckpt_path)
+                    # Save RM optimizer/scheduler states if available
+                    if getattr(rm_model, "optimizer", None) is not None:
+                        try:
+                            torch.save(rm_model.optimizer.state_dict(), os.path.join(rm_ckpt_path, "rm_optimizer.pt"))
+                        except Exception as e:
+                            print(f"[Checkpoint] Failed saving RM optimizer: {e}")
+                    if getattr(rm_model, "scheduler", None) is not None:
+                        try:
+                            torch.save(rm_model.scheduler.state_dict(), os.path.join(rm_ckpt_path, "rm_scheduler.pt"))
+                        except Exception as e:
+                            print(f"[Checkpoint] Failed saving RM scheduler: {e}")
                 except Exception as e:
                     print(f"[Checkpoint] Failed saving RM at step {step}: {e}")
 
@@ -457,7 +504,7 @@ async def training_loop(config: Dict[str, Any]):
 
         # --- Wrapped generation with timeout & single retry (5 min each) ---
         timeout_seconds = 300  # 5 minutes
-        raw_candidates = None
+        candidate_texts = None
         for attempt in range(2):  # attempt 0 + retry 1
             try:
                 candidate_texts = await asyncio.wait_for(
