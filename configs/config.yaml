@@ -32,19 +32,16 @@ dataset:
   field_question: problem
   field_answer: final_answer
 
+
 generation:
   max_concurrency: 64
+  temperature: 1.3
+  top_p: 0.96
+  top_k: 200
+  repetition_penalty: 1.1
+  max_new_tokens: 2248
 
-  # ---- Phase 1 (thinking) ----
-  think_temperature: 1.3
-  think_top_p: 0.96
-  think_top_k: 200
-  think_repetition_penalty: 1.1
-  think_max_new_tokens: 2048
 
-  # ---- Phase 2 (answer / greedy) ----
-  answer_max_new_tokens: 150
-  answer_stop: []
 
 hardware:
   llm_gpu_id: 0
@@ -55,7 +52,6 @@ train:
   batch_size: 16
   n_samples_per_problem: 124
   num_steps: 10000
-  not_improve_steps_limit: 7
 
 
 alpha_control:
@@ -66,8 +62,6 @@ alpha_control:
   correctness_improve_eps: 0.02
   pass1_improve_eps: 0.01
   entropy_change_eps: 0.03
-
-
 
 
 llm_trainer:
@@ -93,7 +87,7 @@ tmp_weights_safetensors_path: /workspace/ADV/tmp_weights.safetenosrs
 
 evaluation:
   at_start: false
-  every_steps: 100
+  every_steps: 50
   n_samples_per_problem: 24
   sampling_batch_size: 48
 
