@@ -398,15 +398,50 @@ async def training_loop(config: Dict[str, Any]):
 
     # If resuming, load checkpoints and hot-swap engine
     if resume_enabled:
+        # TODO - load optimizer state
         if llm_ckpt_path:
             try:
                 llm_trainer.load_model(llm_ckpt_path)
+                # load optimizer/scheduler state if available
+                optim_path = os.path.join(llm_ckpt_path, "optim.pt")
+                if os.path.exists(optim_path):
+                    try:
+                        opt_state = torch.load(optim_path, map_location="cpu")
+                        if llm_trainer.optimizer is not None and opt_state.get("optimizer_state") is not None:
+                            llm_trainer.optimizer.load_state_dict(opt_state["optimizer_state"])
+                        if llm_trainer.scheduler is not None and opt_state.get("scheduler_state") is not None:
+                            llm_trainer.scheduler.load_state_dict(opt_state["scheduler_state"])
+                    except Exception as e:
+                        print(f"[Resume] Failed loading LLM optimizer/scheduler state: {e}")
                 await _async_hot_swap(engine, llm_ckpt_path)
             except Exception as e:
                 print(f"[Resume] Failed loading LLM from {llm_ckpt_path}: {e}")
         if rm_ckpt_path:
             try:
-                rm_model.load_model(rm_ckpt_path)
+                # prefer composite state file if present
+                composite_path = os.path.join(rm_ckpt_path, "reward_model.pt")
+                if os.path.exists(composite_path):
+                    try:
+                        state = torch.load(composite_path, map_location="cpu")
+                        # model state might be full dict or raw state_dict depending on saver
+                        model_state = state.get("model_state")
+                        if model_state is None:
+                            # fallback: file may be raw state_dict
+                            model_state = state if isinstance(state, dict) else None
+                        if model_state is not None:
+                            rm_model.model.load_state_dict(model_state)
+                        if rm_model.optimizer is not None and state.get("optimizer_state") is not None:
+                            rm_model.optimizer.load_state_dict(state["optimizer_state"])
+                        if rm_model.scheduler is not None and state.get("scheduler_state") is not None:
+                            rm_model.scheduler.load_state_dict(state["scheduler_state"])
+                    except Exception as e:
+                        print(f"[Resume] Failed loading RM composite state: {e}; trying model-only loader.")
+                        try:
+                            rm_model.load_model(rm_ckpt_path)
+                        except Exception as e2:
+                            print(f"[Resume] Failed loading RM from {rm_ckpt_path}: {e2}")
+                else:
+                    rm_model.load_model(rm_ckpt_path)
             except Exception as e:
                 print(f"[Resume] Failed loading RM from {rm_ckpt_path}: {e}")
         if alpha_state_path:
@@ -431,11 +466,18 @@ async def training_loop(config: Dict[str, Any]):
 
         # Periodic checkpointing
         if checkpoint_every and step % checkpoint_every == 0:
+            # TODO - save optimizer state
             if llm_ckpt_path:
                 try:
                     os.makedirs(llm_ckpt_path, exist_ok=True)
                     # Save LLM trainer model
                     await _async_save_model(llm_trainer, llm_ckpt_path)
+                    # Save optimizer/scheduler state
+                    optim_blob = {
+                        "optimizer_state": llm_trainer.optimizer.state_dict() if getattr(llm_trainer, "optimizer", None) else None,
+                        "scheduler_state": llm_trainer.scheduler.state_dict() if getattr(llm_trainer, "scheduler", None) else None,
+                    }
+                    torch.save(optim_blob, os.path.join(llm_ckpt_path, "optim.pt"))
                     # Save alpha control state alongside LLM
                     if alpha_state_path:
                         alpha_control.save_state(alpha_state_path)
@@ -444,7 +486,8 @@ async def training_loop(config: Dict[str, Any]):
             if rm_ckpt_path:
                 try:
                     os.makedirs(rm_ckpt_path, exist_ok=True)
-                    rm_model.save_model(rm_ckpt_path)
+                    # Save RM model + optimizer/scheduler together
+                    rm_model.save_state(rm_ckpt_path)
                 except Exception as e:
                     print(f"[Checkpoint] Failed saving RM at step {step}: {e}")
 
