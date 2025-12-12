@@ -367,7 +367,7 @@ class LLMTrainer:
             sizes.append(len(cands))
             for cand in cands:
                 flat_questions.append(questions[qi])
-                flat_candidates.append(cand)
+                flat_candidates.append(self.clear_solution(cand))
         # Early return if nothing to score
         if len(flat_candidates) == 0:
             return [[] for _ in sizes]
