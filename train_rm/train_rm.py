@@ -28,6 +28,10 @@ from transformers import AutoTokenizer, AutoModel, get_cosine_schedule_with_warm
 from tqdm import tqdm
 from modeling_student_prm import StudentPRM, StudentPRMConfig
 import shutil
+try:
+    from src.constants import THINK_STOP as STUDENT_POOL_TOKEN
+except ImportError:
+    from .src.constants import THINK_STOP as STUDENT_POOL_TOKEN
 
 SYSTEM_PROMPT = "You are a helpful math reasoning assistant. Provide step-by-step reasoning and put the final answer in \\boxed{}."
 
@@ -42,7 +46,6 @@ WEIGHT_DECAY = 0.01
 
 
 STUDENT_BASE = "Qwen/Qwen2.5-Math-1.5B"
-STUDENT_POOL_TOKEN = "</think>"
 
 PATH_TRAIN_A = "prm_train_A"
 PATH_TRAIN_B = "prm_train_B"
