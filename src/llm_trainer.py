@@ -328,7 +328,7 @@ class LLMTrainer:
         torch.save(state, os.path.join(path, "trainer_optim.pt"))
 
     def load_state(self, path: str):
-        """Load model plus optimizer and scheduler states if present."""
+        """Load model plus optimizer and scheduler states if present"""
         # Load model from directory
         self.load_model(path)
         # Try load optimizer/scheduler
