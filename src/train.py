@@ -12,7 +12,7 @@ import numpy as np
 from typing import Dict, Any, List, Tuple, Optional
 from datasets import load_dataset
 from transformers import AutoTokenizer
-from .prompting import build_prompts
+from .prompting import build_prompts, clear_solution
 from .generation import build_sglang_engine, EngineCircuitBreaker  # added EngineCircuitBreaker import
 from .reward_model import load_reward_model
 from .answer_parse import compute_final_correctness
@@ -24,6 +24,8 @@ from .alpha_control import AlphaControl  # moved to its own module
 import time
 import re
 import requests
+
+MIN_THINK_CHARS = 30
 
 def load_config(path: str) -> Dict[str, Any]:
     with open(path, "r") as f:
@@ -298,7 +300,7 @@ def filter_and_select_mixed(
         new_texts: List[str] = []
         new_corr: List[int] = []
         for t, f, corr in zip(texts_row, flags_row, corr_row):
-            if corr == -1 or (f == 0 and corr == 1):
+            if corr == -1 or (f == 0 and corr == 1) or len(clear_solution(t)) < MIN_THINK_CHARS:
                 continue
             new_texts.append(t)
             new_corr.append(corr)
@@ -537,11 +539,11 @@ async def training_loop(config: Dict[str, Any]):
 
         st = time.time()
         try:
-            kl_scores, correctness_tensor = llm_trainer.compute_kl_scores(questions_f, candidates_f, correctness_tensor, 5)
+            kl_scores = llm_trainer.compute_kl_scores(questions_f, candidates_f, 5)
         except Exception as e:
             print(f"[Step {step}] Exception during explore/KL scoring: {e} will retry batch with 0.25 batch size.")
             torch.cuda.empty_cache()
-            kl_scores, correctness_tensor = llm_trainer.compute_kl_scores(questions_f, candidates_f, correctness_tensor, 12)
+            kl_scores = llm_trainer.compute_kl_scores(questions_f, candidates_f, 12)
         print(f"[Step {step}] KL calculation: {time.time() - st:.2f}s")
 
 

@@ -11,8 +11,6 @@ import os
 from .optimizer import create_optimizer, create_scheduler
 from .prompting import build_prompts
 
-MIN_VALID_LENGTH_THINK = 30
-
 class LLMTrainer:
     """Lightweight LLM trainer scaffold with DPO train_step."""
 
@@ -328,7 +326,7 @@ class LLMTrainer:
         torch.save(state, os.path.join(path, "trainer_optim.pt"))
 
     def load_state(self, path: str):
-        """Load model plus optimizer and scheduler states if present"""
+        """Load model plus optimizer and scheduler states if present."""
         # Load model from directory
         self.load_model(path)
         # Try load optimizer/scheduler
@@ -349,9 +347,8 @@ class LLMTrainer:
         self,
         questions: List[str],
         candidates_by_q: List[List[str]],
-        correctness: List[List[int]],
         batch_size: int,
-    ) -> Tuple[List[List[float]],  List[List[int]]]:
+    ) -> List[List[float]]:
         """
         Compute reference surprisal over completion tokens for each candidate:
         explore_score = - (1 / T_i) * sum_t log pi_ref(x_t | q)
@@ -370,10 +367,7 @@ class LLMTrainer:
             sizes.append(len(cands))
             for i, cand in enumerate(cands):
                 flat_questions.append(questions[qi])
-                sol = self.clear_solution(cand)
-                flat_candidates.append(sol)
-                if len(sol) < MIN_VALID_LENGTH_THINK:
-                    correctness[qi][i] = -1
+                flat_candidates.append(self.clear_solution(cand))
         # Early return if nothing to score
         if len(flat_candidates) == 0:
             return [[] for _ in sizes]
@@ -433,7 +427,7 @@ class LLMTrainer:
         for n in sizes:
             result.append(flat_scores[idx:idx + n])
             idx += n
-        return result, correctness
+        return result
 
     def compute_avg_entropy(
             self,
