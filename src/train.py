@@ -537,11 +537,11 @@ async def training_loop(config: Dict[str, Any]):
 
         st = time.time()
         try:
-            kl_scores, correctness = llm_trainer.compute_kl_scores(questions_f, candidates_f, correctness, 5)
+            kl_scores, correctness_tensor = llm_trainer.compute_kl_scores(questions_f, candidates_f, correctness_tensor, 5)
         except Exception as e:
             print(f"[Step {step}] Exception during explore/KL scoring: {e} will retry batch with 0.25 batch size.")
             torch.cuda.empty_cache()
-            kl_scores, correctness = llm_trainer.compute_kl_scores(questions_f, candidates_f, correctness, 12)
+            kl_scores, correctness_tensor = llm_trainer.compute_kl_scores(questions_f, candidates_f, correctness_tensor, 12)
         print(f"[Step {step}] KL calculation: {time.time() - st:.2f}s")
 
 
