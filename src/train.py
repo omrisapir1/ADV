@@ -427,8 +427,6 @@ async def training_loop(config: Dict[str, Any]):
 
 
     for step in range(start_step, num_steps):
-        if step == 50:
-            alpha_control.alpha = 0.9
         # LLM trainer reference refresh
         if evaluation_config and (step > 0 or evaluation_config['at_start']) and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
@@ -538,11 +536,11 @@ async def training_loop(config: Dict[str, Any]):
 
         st = time.time()
         try:
-            kl_scores = llm_trainer.compute_kl_scores(questions_f, candidates_f, 5)
+            kl_scores, correctness = llm_trainer.compute_kl_scores(questions_f, candidates_f, correctness, 5)
         except Exception as e:
             print(f"[Step {step}] Exception during explore/KL scoring: {e} will retry batch with 0.25 batch size.")
             torch.cuda.empty_cache()
-            kl_scores = llm_trainer.compute_kl_scores(questions_f, candidates_f, 12)
+            kl_scores, correctness = llm_trainer.compute_kl_scores(questions_f, candidates_f, correctness, 12)
         print(f"[Step {step}] KL calculation: {time.time() - st:.2f}s")
 
 

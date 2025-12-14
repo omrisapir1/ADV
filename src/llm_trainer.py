@@ -11,6 +11,8 @@ import os
 from .optimizer import create_optimizer, create_scheduler
 from .prompting import build_prompts
 
+MIN_VALID_LENGTH_THINK = 30
+
 class LLMTrainer:
     """Lightweight LLM trainer scaffold with DPO train_step."""
 
@@ -347,8 +349,9 @@ class LLMTrainer:
         self,
         questions: List[str],
         candidates_by_q: List[List[str]],
+        correctness: List[List[int]],
         batch_size: int,
-    ) -> List[List[float]]:
+    ) -> Tuple[List[List[float]],  List[List[int]]]:
         """
         Compute reference surprisal over completion tokens for each candidate:
         explore_score = - (1 / T_i) * sum_t log pi_ref(x_t | q)
@@ -365,9 +368,12 @@ class LLMTrainer:
         sizes: List[int] = []
         for qi, cands in enumerate(candidates_by_q):
             sizes.append(len(cands))
-            for cand in cands:
+            for i, cand in enumerate(cands):
                 flat_questions.append(questions[qi])
-                flat_candidates.append(self.clear_solution(cand))
+                sol = self.clear_solution(cand)
+                flat_candidates.append(sol)
+                if len(sol) < MIN_VALID_LENGTH_THINK:
+                    correctness[qi][i] = -1
         # Early return if nothing to score
         if len(flat_candidates) == 0:
             return [[] for _ in sizes]
@@ -427,7 +433,7 @@ class LLMTrainer:
         for n in sizes:
             result.append(flat_scores[idx:idx + n])
             idx += n
-        return result
+        return result, correctness
 
     def compute_avg_entropy(
             self,
