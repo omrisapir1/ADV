@@ -416,7 +416,7 @@ async def training_loop(config: Dict[str, Any]):
                 print(f"[Resume] Failed loading RM from {rm_ckpt_path}: {e}")
         if alpha_state_path:
             alpha_control.load_state(alpha_state_path)
-            
+
 
 
 
@@ -427,6 +427,8 @@ async def training_loop(config: Dict[str, Any]):
 
 
     for step in range(start_step, num_steps):
+        if step == 50:
+            alpha_control.alpha = 0.9
         # LLM trainer reference refresh
         if evaluation_config and (step > 0 or evaluation_config['at_start']) and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
