@@ -1,10 +1,10 @@
 python3 -m sglang.launch_server --model omrisap/Qwen2.5-Math-1.5B-5K-SFT-think \
-  --host 0.0.0.0 --port 30000 \
+  --host 0.0.0.0 --port 8001 \
   --dtype bfloat16 \
   --mem-fraction-static 0.85 \
   --tp 1 \
-  --max-running-requests 2148 \
-  --max-prefill-tokens 64000
+  --max-running-requests 64 \
+  --max-prefill-tokens 128000
 
 
 
