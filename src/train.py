@@ -25,7 +25,6 @@ import time
 import re
 import requests
 
-MIN_THINK_CHARS = 30
 
 def load_config(path: str) -> Dict[str, Any]:
     with open(path, "r") as f:
@@ -197,10 +196,9 @@ def _select_triplet_for_llm(
     S = alpha * explore_norm + (1.0 - alpha) * rm_score_norm
     llm_pos_j = max(correct_ids, key=lambda j: float(S[j]))
 
-    random_score_norm = np.random.permutation(explore_norm)
-    S_neg = alpha * explore_norm + (1.0 - alpha) * random_score_norm
+    S_neg = (1.0 - alpha) * rm_score_norm + alpha * (1.0 - explore_norm)
+    llm_neg_j = max(incorrect_ids, key=lambda j: float(S_neg[j]))
 
-    llm_neg_j = min(incorrect_ids, key=lambda j: float(S_neg[j]))
     return llm_pos_j, llm_neg_j
     # llm_neg_j = min(incorrect_ids, key=lambda j: float(S[j]))
     # if S[llm_pos_j] <= S[llm_neg_j]:
@@ -300,7 +298,7 @@ def filter_and_select_mixed(
         new_texts: List[str] = []
         new_corr: List[int] = []
         for t, f, corr in zip(texts_row, flags_row, corr_row):
-            if corr == -1 or (f == 0 and corr == 1) or len(clear_solution(t)) < MIN_THINK_CHARS:
+            if corr == -1 or (f == 0 and corr == 1):
                 continue
             new_texts.append(t)
             new_corr.append(corr)
@@ -583,7 +581,9 @@ async def training_loop(config: Dict[str, Any]):
         print(f"[Step {step}] RM Loss: {rm_avg_loss:.4f}, LLM Loss: {llm_avg_loss:.4f} alpha: {alpha_control.alpha:.4f}")
 
 
-        alpha_control.step(np.mean([np.mean(c) for c in correctness_filtered_list]), np.mean(pass1_avg), entropy_avg, step)
+        update_ref_model = alpha_control.step(np.mean([np.mean(c) for c in correctness_filtered_list]), np.mean(pass1_avg), entropy_avg, step)
+        if update_ref_model:
+            llm_trainer.update_ref_model()
 
         log_questions(questions_f, gold_answers_f, candidates_f, rm_scores, kl_scores, entropy_avg, correctness_filtered_list, rm_avg_loss, llm_avg_loss, pass1_avg, alpha_control.alpha)
         if last_swap_task is not None:
