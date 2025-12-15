@@ -58,7 +58,7 @@ class AlphaControl:
         self.last_entropy_ema: float = 0.0
 
         # EMA for entropy only
-        decay = 1.0 - 1.0 / max(1, self.avg_last_steps)
+        decay = 0.5# 1.0 - 1.0 / max(1, self.avg_last_steps)
         self.entropy_ema = EMA(decay)
         self.stuck_on_explore = 0
 
