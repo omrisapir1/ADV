@@ -430,7 +430,7 @@ async def training_loop(config: Dict[str, Any]):
 
 
     for step in range(start_step, num_steps):
-        if step ==275:
+        if step ==10:
             llm_trainer.update_ref_model()
             print("Updated ref model")
         # LLM trainer reference refresh
