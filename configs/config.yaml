@@ -66,6 +66,7 @@ alpha_control:
   correctness_improve_eps: 0.1
   pass1_improve_eps: 0.05
   entropy_change_eps: 0.03
+  max_not_improved_steps: 3
   update_ref_for_stuck_steps: 4
 
 

@@ -45,6 +45,7 @@ class AlphaControl:
         self.pass1_improve_eps: float = float(cfg["pass1_improve_eps"])
         self.entropy_change_eps: float = float(cfg["entropy_change_eps"])
         self.update_ref_for_stuck_steps: int = int(cfg["update_ref_for_stuck_steps"])
+        self.max_not_improved_steps: int = int(cfg["max_not_improved_steps"])
 
         # ----- Runtime state -----
         self.alpha: float = self.initial_alpha
@@ -61,6 +62,7 @@ class AlphaControl:
         decay = 0.5# 1.0 - 1.0 / max(1, self.avg_last_steps)
         self.entropy_ema = EMA(decay)
         self.stuck_on_explore = 0
+        self.not_improved_steps = 0
 
     # ------------------------------------------------------------
     # Core update
@@ -136,12 +138,19 @@ class AlphaControl:
             print("[AlphaControl] α unchanged (learning progress)")
 
         # 3. No progress & entropy stable → need more exploration
-        else:
-            if self.alpha == 1.0:
-                self.stuck_on_explore += 1
+        elif self.alpha == 1.0:
 
+            self.stuck_on_explore += 1
+
+            print(f"[AlphaControl] alpha stuck at 1.0 stuck_on_explore={self.stuck_on_explore}")
+        elif entropy_delta < (-self.entropy_change_eps) or self.not_improved_steps == self.max_not_improved_steps:
             self.alpha = min(1.0, self.alpha + self.alpha_step)
-            print("[AlphaControl] ↑ alpha (stagnation)")
+            print("[AlphaControl] ↑ alpha (no progress, stable entropy)")
+            self.stuck_on_explore = 0
+            self.not_improved_steps = 0
+        else:
+            self.not_improved_steps += 1
+
 
         # ---- Update baselines ----
         self.last_correctness_avg = correctness_avg
