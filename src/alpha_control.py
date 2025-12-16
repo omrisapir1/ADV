@@ -85,6 +85,7 @@ class AlphaControl:
         self.correctness_history.append(new_correctness)
         self.pass1_history.append(new_pass1)
         self.entropy_history.append(new_entropy)
+        self.entropy_ema.update(new_entropy)
 
         if step == 0 or step % self.adjust_every != 0:
             return False
