@@ -62,7 +62,7 @@ alpha_control:
   initial_alpha: 0
   alpha_step: 0.25
   avg_last_steps: 10
-  adjust_every: 800
+  adjust_every: 12
   correctness_improve_eps: 0.1
   pass1_improve_eps: 0.05
   entropy_change_eps: 0.03
@@ -83,7 +83,7 @@ llm_trainer:
 #      warmup_steps: 10
 #      lr: 1e-6
     name: adamw
-    lr: 5e-5
+    lr: 3e-5
     weight_decay: 0.000
     eps: 1.0e-8
     betas:
