@@ -62,7 +62,7 @@ alpha_control:
   initial_alpha: 1
   alpha_step: 0.25
   avg_last_steps: 10
-  adjust_every: 12
+  adjust_every: 800
   correctness_improve_eps: 0.1
   pass1_improve_eps: 0.05
   entropy_change_eps: 0.03
