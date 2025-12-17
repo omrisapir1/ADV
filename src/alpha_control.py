@@ -108,6 +108,9 @@ class AlphaControl:
             self.last_entropy_ema = entropy_ema
             return False
 
+        if step <725:
+            return False
+
         # ---- Deltas ----
         correctness_delta = correctness_avg - self.last_correctness_avg
         pass1_delta = pass1_avg - self.last_pass1_avg
