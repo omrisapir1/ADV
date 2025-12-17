@@ -417,10 +417,6 @@ async def training_loop(config: Dict[str, Any]):
         if alpha_state_path:
             alpha_control.load_state(alpha_state_path)
 
-        alpha_control.alpha = 1
-
-
-
 
 
     ensure_empty_log_dir(LOG_DIR)

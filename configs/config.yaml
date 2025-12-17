@@ -66,7 +66,7 @@ alpha_control:
   correctness_improve_eps: 0.1
   pass1_improve_eps: 0.05
   entropy_change_eps: 0.03
-  max_not_improved_steps: 3
+  max_not_improved_steps: 1
   update_ref_for_stuck_steps: 4
 
 
@@ -83,7 +83,7 @@ llm_trainer:
 #      warmup_steps: 10
 #      lr: 1e-6
     name: adamw
-    lr: 2e-5
+    lr: 5e-5
     weight_decay: 0.000
     eps: 1.0e-8
     betas:
@@ -102,7 +102,7 @@ evaluation:
 
 resume_training:
   checkpoint_every: 25
-  enabled: true
+  enabled: false
   llm_path: /workspace/ADV/llm_checkpoint
   rm_path: /workspace/ADV/rm_checkpoint
   at_step: 675
