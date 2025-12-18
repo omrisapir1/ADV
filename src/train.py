@@ -368,6 +368,7 @@ async def training_loop(config: Dict[str, Any]):
     llm_trainer__gpu = config["hardware"].get("llm_trainer_gpu_id")
 
     llm_trainer_config = config.get("llm_trainer")
+    update_ref_model_every = llm_trainer_config.get('update_ref_model_every')
 
     num_steps = config["train"]["num_steps"]
     batch_size = config["train"]["batch_size"]
@@ -426,6 +427,8 @@ async def training_loop(config: Dict[str, Any]):
 
 
     for step in range(start_step, num_steps):
+        if step > 0 and step % update_ref_model_every == 0:
+            llm_trainer.update_ref_model()
         # LLM trainer reference refresh
         if evaluation_config and (step > 0 or evaluation_config['at_start']) and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(

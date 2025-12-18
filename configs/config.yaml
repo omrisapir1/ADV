@@ -73,7 +73,7 @@ alpha_control:
 
 
 llm_trainer:
-  update_ref_model_every: 1000
+  update_ref_model_every: 200
   weight_decay: 0.000
   dpo_beta: 0.1
   batch_size: 1
