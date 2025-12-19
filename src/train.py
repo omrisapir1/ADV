@@ -368,7 +368,7 @@ async def training_loop(config: Dict[str, Any]):
     llm_trainer__gpu = config["hardware"].get("llm_trainer_gpu_id")
 
     llm_trainer_config = config.get("llm_trainer")
-    update_ref_model_every = llm_trainer_config.get('update_ref_model_every')
+    update_ref_model_at_kl = llm_trainer_config.get('update_ref_model_at_kl')
 
     num_steps = config["train"]["num_steps"]
     batch_size = config["train"]["batch_size"]
@@ -427,8 +427,6 @@ async def training_loop(config: Dict[str, Any]):
 
 
     for step in range(start_step, num_steps):
-        if step > 0 and step % update_ref_model_every == 0:
-            llm_trainer.update_ref_model()
         # LLM trainer reference refresh
         if evaluation_config and (step > 0 or evaluation_config['at_start']) and step % evaluation_config['every_steps'] == 0:
             eval_res = await run_full_evaluation(
@@ -544,6 +542,11 @@ async def training_loop(config: Dict[str, Any]):
             torch.cuda.empty_cache()
             kl_scores = llm_trainer.compute_kl_scores(questions_f, candidates_f, 12)
         print(f"[Step {step}] KL calculation: {time.time() - st:.2f}s")
+
+        kl_avg = np.mean([np.mean(c) for c in kl_scores])
+        if update_ref_model_at_kl and kl_avg > update_ref_model_at_kl:
+            llm_trainer.update_ref_model()
+            print(f"[Step {step}] KL average {kl_avg:.4f} exceeded threshold {update_ref_model_at_kl}, updated reference model.")
 
 
 
